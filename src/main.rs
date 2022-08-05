@@ -1,0 +1,9 @@
+#![no_std]
+#![no_main]
+
+#[no_mangle]
+pub fn hentry() {
+
+}
+
+
