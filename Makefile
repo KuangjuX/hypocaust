@@ -25,3 +25,6 @@ $(KERNEL_BIN): build
 
 qemu: $(KERNEL_BIN)
 	$(QEMU) $(QEMUOPTS)
+
+clean:
+	@cargo clean

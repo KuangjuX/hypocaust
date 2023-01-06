@@ -40,7 +40,7 @@ pub fn console_getchar() -> usize {
     sbi_call(SBI_CONSOLE_GETCHAR, 0, 0, 0)
 }
 
-// use crate::board::QEMUExit;
-// pub fn shutdown(exit_code: usize) -> ! {
-//     crate::board::QEMU_EXIT_HANDLE.exit_failure()
-// }
+use crate::boards::qemu::{ QEMU_EXIT_HANDLE, QEMUExit };
+pub fn shutdown(exit_code: usize) -> ! {
+    QEMU_EXIT_HANDLE.exit_failure()
+}
