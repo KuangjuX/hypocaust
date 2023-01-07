@@ -4,6 +4,8 @@ KERNEL_ELF	:= target/$(TARGET)/$(MODE)/hypocaust
 KERNEL_BIN	:= target/$(TARGET)/$(MODE)/hypocaust.bin
 CPUS		:= 1
 
+BOARD 		:= qemu
+
 # 客户操作系统
 GUEST_KERNEL_ELF	:= minikernel/target/$(TARGET)/$(MODE)/minikernel
 GUEST_KERNEL_BIN	:= minikernel/target/$(TARGET)/$(MODE)/minikernel.bin
@@ -23,21 +25,23 @@ QEMUOPTS	+=-kernel $(KERNEL_BIN) -initrd $(GUEST_KERNEL_BIN)
 QEMUOPTS	+=-serial stdio
 
 
-build: 
-	cargo build $(GUEST_KERNEL_FEATURE)
 
-$(KERNEL_BIN): build
-	@$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
 
 $(GUEST_KERNEL_ELF):
-	@cd minikernel
-	@cargo build
+	cd minikernel && cargo build
 
 $(GUEST_KERNEL_BIN): $(GUEST_KERNEL_ELF)
-	@$(OBJCOPY) $(GUEST_KERNEL_ELF) --strip-all -O binary $@
+	$(OBJCOPY) $(GUEST_KERNEL_ELF) --strip-all -O binary $@
+
+build: $(GUEST_KERNEL_BIN)
+	cargo build $(GUEST_KERNEL_FEATURE)
+
+$(KERNEL_BIN): build 
+	$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
+
 	
 
-qemu: $(KERNEL_BIN) $(GUEST_KERNEL_BIN)
+qemu: $(KERNEL_BIN)
 	$(QEMU) $(QEMUOPTS)
 
 clean:

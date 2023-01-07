@@ -25,7 +25,7 @@ pub fn clear_bss() {
     (sbss as usize..ebss as usize).for_each(|a| unsafe { (a as *mut u8).write_volatile(0) });
 }
 
-/// hypocaust 的入口地址，进入 S mode
+
 #[no_mangle]
 pub fn rust_main() -> ! {
     clear_bss();
