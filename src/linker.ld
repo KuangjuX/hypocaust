@@ -50,4 +50,11 @@ SECTIONS
     /DISCARD/ : {
         *(.eh_frame)
     }
+
+    . = ALIGN(4K);
+    sinitrd = .;
+    .initrd : {
+        *(.initrd)
+    }
+    einitrd = .;
 }

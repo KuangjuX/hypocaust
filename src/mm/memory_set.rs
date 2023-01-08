@@ -24,6 +24,8 @@ extern "C" {
     fn ebss();
     fn ekernel();
     fn strampoline();
+    fn sinitrd();
+    fn einitrd();
 }
 
 lazy_static! {
@@ -60,6 +62,8 @@ impl MemorySet {
             None,
         );
     }
+
+    /// 将内存区域 push 到页表中，并映射内存区域
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -75,7 +79,10 @@ impl MemorySet {
             PTEFlags::R | PTEFlags::X,
         );
     }
+
     /// Without kernel stacks.
+    /// 内核虚拟地址映射
+    /// 映射了内核代码段和数据段以及跳板页，没有映射内核栈
     pub fn new_kernel() -> Self {
         let mut memory_set = Self::new_bare();
         // map trampoline
@@ -88,6 +95,11 @@ impl MemorySet {
             ".bss [{:#x}, {:#x})",
             sbss_with_stack as usize, ebss as usize
         );
+        println!(
+            ".initrd [{:#x}, {:#x})",
+            sinitrd as usize, einitrd as usize
+        );
+        
         println!("mapping .text section");
         memory_set.push(
             MapArea::new(
@@ -152,6 +164,46 @@ impl MemorySet {
         }
         memory_set
     }
+
+    /// 加载客户操作系统
+    /// 返回 MemorySet 以及入口地址
+    pub fn map_guest_kernel(guest_kernel_data: &[u8]) -> (Self, usize) {
+        let mut memory_set = Self::new_bare();
+        // map program headers of elf, with U flag
+        let elf = xmas_elf::ElfFile::new(guest_kernel_data).unwrap();
+        let elf_header = elf.header;
+        let magic = elf_header.pt1.magic;
+        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
+        let ph_count = elf_header.pt2.ph_count();
+        //  let mut max_end_vpn = VirtPageNum(0);
+        for i in 0..ph_count {
+            let ph = elf.program_header(i).unwrap();
+            if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
+                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
+                let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
+                let mut map_perm = MapPermission::U;
+                let ph_flags = ph.flags();
+                if ph_flags.is_read() {
+                    map_perm |= MapPermission::R;
+                }
+                if ph_flags.is_write() {
+                    map_perm |= MapPermission::W;
+                }
+                if ph_flags.is_execute() {
+                    map_perm |= MapPermission::X;
+                }
+                let map_area = MapArea::new(start_va, end_va, MapType::Framed, map_perm);
+            //  max_end_vpn = map_area.vpn_range.get_end();
+                memory_set.push(
+                    map_area,
+                    Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
+                );
+            }
+        }
+        (memory_set, elf.header.pt2.entry_point() as usize)
+    
+    }
+
     /// Include sections in elf and trampoline and TrapContext and user stack,
     /// also returns user_sp and entry point.
     pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
@@ -220,6 +272,8 @@ impl MemorySet {
             elf.header.pt2.entry_point() as usize,
         )
     }
+
+    /// 激活根页表
     pub fn activate(&self) {
         let satp = self.page_table.token();
         unsafe {
@@ -227,6 +281,8 @@ impl MemorySet {
             asm!("sfence.vma");
         }
     }
+    
+    /// 将虚拟页号翻译成页表项
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.page_table.translate(vpn)
     }
@@ -259,9 +315,11 @@ impl MapArea {
     pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
         match self.map_type {
+            // 线性映射
             MapType::Identical => {
                 ppn = PhysPageNum(vpn.0);
             }
+            // 分配内存映射
             MapType::Framed => {
                 let frame = frame_alloc().unwrap();
                 ppn = frame.ppn;
