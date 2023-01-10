@@ -188,7 +188,7 @@ impl MemorySet {
         // 代码段：可读可执行
         // 数据段：可读
         // 所有段映射用户空间
-        let phy_addr = GUEST_KERNEL_PHY_START_1 as *mut u8;
+        let mut phy_addr = GUEST_KERNEL_PHY_START_1 as *mut u8;
         for i in 0..ph_count {
             let ph = elf.program_header(i).unwrap();
             if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
@@ -204,6 +204,7 @@ impl MemorySet {
                 if ph_flags.is_execute() {
                     map_perm |= MapPermission::X;
                 }
+                // 将内存拷贝到对应的物理内存上
                 unsafe{
                     core::ptr::copy(guest_kernel_data.as_ptr().add(ph.offset() as usize), phy_addr, ph.file_size() as usize);
                     println!(
@@ -212,6 +213,9 @@ impl MemorySet {
                         phy_addr as usize,
                         ph.file_size() as usize
                     );
+                    let page_align_size = ((ph.file_size() as usize + PAGE_SIZE - 1) >> 12) << 12;
+                    println!("[hypervisor] page align size: {:#x}", page_align_size);
+                    phy_addr = phy_addr.add(page_align_size);
                 }
                 
                 let map_area = MapArea::new(start_va, end_va, MapType::Identical, map_perm);
