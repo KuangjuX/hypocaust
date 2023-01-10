@@ -47,14 +47,15 @@ SECTIONS
     ebss = .;
     ekernel = .;
 
-    /DISCARD/ : {
-        *(.eh_frame)
-    }
-
     . = ALIGN(4K);
     sinitrd = .;
     .initrd : {
         *(.initrd)
     }
     einitrd = .;
+
+    /DISCARD/ : {
+        *(.eh_frame)
+    }
+
 }

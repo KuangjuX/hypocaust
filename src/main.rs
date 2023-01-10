@@ -22,7 +22,6 @@
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
 
-use crate::mm::{MemorySet, KERNEL_SPACE};
 
 extern crate alloc;
 
@@ -44,9 +43,12 @@ pub mod syscall;
 pub mod task;
 mod timer;
 pub mod trap;
+mod fdt;
+
+use fdt::Fdt;
+
 
 core::arch::global_asm!(include_str!("entry.asm"));
-// core::arch::global_asm!(include_str!("link_app.S"));
 
 #[link_section = ".initrd"]
 #[cfg(feature = "embed_guest_kernel")]
@@ -71,18 +73,11 @@ fn clear_bss() {
 
 #[no_mangle]
 /// the rust entry-point of os
-pub fn hentry() -> ! {
+pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     clear_bss();
     println!("[hypervisor] Hello Hypocaust");
-    // println!("[kernel] Guest Kernel len: {:#x}", GUEST_KERNEL.len());
-    // println!("[kernel] guest kernel address: {:#x}", GUEST_KERNEL.as_ptr() as usize);
-    // for i in 0..20 {
-    //     print!("{:#x} ", &GUEST_KERNEL[i]);
-    // }
-    // 将客户操作系统记载入对应的物理地址
-    let (guest_kernel_area, entry_point) = unsafe{ load_guest_kernel(&GUEST_KERNEL) };
+    println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
     mm::init();
-    // KERNEL_SPACE.exclusive_access().insert_framed_area(start_va, end_va, permission)
     mm::remap_test();
     trap::init();
     trap::enable_timer_interrupt();
@@ -91,18 +86,5 @@ pub fn hentry() -> ! {
     loop{}
 }
 
-/// 将客户操作系统加载到对应的物理地址
-pub unsafe fn load_guest_kernel(guest_kernel: &[u8]) -> (MemorySet, usize){
-    println!("Loading guest kernel......");
-    let guest_kernel_len = guest_kernel.len();
-    use crate::config::{ GUEST_KERNEL_PHY_START, MAX_GUEST_KERNEL_PHY_END };
-    let max_len = MAX_GUEST_KERNEL_PHY_END - GUEST_KERNEL_PHY_START;
-    // 清空客户操作系统物理地址内存
-    core::slice::from_raw_parts_mut(GUEST_KERNEL_PHY_START as *mut u8, max_len).fill(0);
-    // 将客户操作系统写入对应的物理地址
-    let guest_kernel_dst = core::slice::from_raw_parts_mut(GUEST_KERNEL_PHY_START as *mut u8, guest_kernel_len);
-    guest_kernel_dst.copy_from_slice(guest_kernel);
-    let (guest_kernel_area, entry_point) = MemorySet::map_guest_kernel(&guest_kernel_dst);
-    (guest_kernel_area, entry_point)
-}
+
 

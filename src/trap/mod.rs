@@ -23,7 +23,7 @@ use core::arch::{asm, global_asm};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},
-    sie, stval, stvec,
+    sie, stval, stvec, sepc
 };
 
 global_asm!(include_str!("trap.S"));
@@ -119,7 +119,16 @@ pub fn trap_return() -> ! {
 /// Unimplement: traps/interrupts/exceptions from kernel mode
 /// Todo: Chapter 9: I/O device
 pub fn trap_from_kernel() -> ! {
-    panic!("a trap from kernel!");
+    let scause= scause::read();
+    match scause.cause() {
+        Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) => {
+            let stval = stval::read();
+            let sepc = sepc::read();
+            panic!("sepc: {:#x}, stval: {:#x}", sepc, stval);
+        },
+        _ => {}
+    }
+    panic!()
 }
 
 pub use context::TrapContext;

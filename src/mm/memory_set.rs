@@ -4,7 +4,9 @@ use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
+use crate::GUEST_KERNEL;
 use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
+use crate::mm::load_guest_kernel;
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -162,20 +164,22 @@ impl MemorySet {
                 None,
             );
         }
+
         memory_set
     }
 
     /// 加载客户操作系统
     /// 返回 MemorySet 以及入口地址
-    pub fn map_guest_kernel(guest_kernel_data: &[u8]) -> (Self, usize) {
-        let mut memory_set = Self::new_bare();
+    pub fn map_guest_kernel(&mut self, guest_kernel_data: &[u8]) -> usize {
+        // let mut memory_set = Self::new_bare();
         // map program headers of elf, with U flag
         let elf = xmas_elf::ElfFile::new(guest_kernel_data).unwrap();
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
         let ph_count = elf_header.pt2.ph_count();
-        //  let mut max_end_vpn = VirtPageNum(0);
+        // 代码段：可读可执行
+        // 数据段：可读
         for i in 0..ph_count {
             let ph = elf.program_header(i).unwrap();
             if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
@@ -186,21 +190,22 @@ impl MemorySet {
                 if ph_flags.is_read() {
                     map_perm |= MapPermission::R;
                 }
-                if ph_flags.is_write() {
-                    map_perm |= MapPermission::W;
-                }
+                // 均设置为不可写，以便陷入虚拟机
+                // if ph_flags.is_write() {
+                //     map_perm |= MapPermission::W;
+                // }
                 if ph_flags.is_execute() {
                     map_perm |= MapPermission::X;
                 }
-                let map_area = MapArea::new(start_va, end_va, MapType::Framed, map_perm);
-            //  max_end_vpn = map_area.vpn_range.get_end();
-                memory_set.push(
+                let map_area = MapArea::new(start_va, end_va, MapType::Identical, map_perm);
+                println!("[kernel] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
+                self.push(
                     map_area,
-                    Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
+                    None,
                 );
             }
         }
-        (memory_set, elf.header.pt2.entry_point() as usize)
+        elf.header.pt2.entry_point() as usize
     
     }
 
@@ -390,10 +395,14 @@ bitflags! {
 
 #[allow(unused)]
 pub fn remap_test() {
+    use crate::config::GUEST_KERNEL_VIRT_STRAT_1;
     let mut kernel_space = KERNEL_SPACE.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
     let mid_data: VirtAddr = ((sdata as usize + edata as usize) / 2).into();
+
+    let guest_kernel_text: VirtAddr = GUEST_KERNEL_VIRT_STRAT_1.into();
+
     assert!(!kernel_space
         .page_table
         .translate(mid_text.floor())
@@ -409,5 +418,8 @@ pub fn remap_test() {
         .translate(mid_data.floor())
         .unwrap()
         .executable(),);
+
+    assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().executable());
+    // 测试 guest ketnel
     println!("remap_test passed!");
 }

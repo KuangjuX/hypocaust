@@ -92,13 +92,13 @@ lazy_static! {
         unsafe { UPSafeCell::new(FrameAllocatorImpl::new()) };
 }
 
-/// initiate the frame allocator using `ekernel` and `MEMORY_END`
+/// initiate the frame allocator using `einitrd` and `MEMORY_END`
 pub fn init_frame_allocator() {
     extern "C" {
-        fn ekernel();
+        fn einitrd();
     }
     FRAME_ALLOCATOR.exclusive_access().init(
-        PhysAddr::from(ekernel as usize).ceil(),
+        PhysAddr::from(einitrd as usize).ceil(),
         PhysAddr::from(MEMORY_END).floor(),
     );
 }

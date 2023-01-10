@@ -20,9 +20,9 @@ BOOTLOADER	:= bootloader/rustsbi-qemu.bin
 
 KERNEL_ENTRY_PA := 0x80200000
 
-QEMUOPTS	= -M 3G -machine virt -bios $(BOOTLOADER) -display none
-QEMUOPTS	+=-kernel $(KERNEL_BIN) -initrd $(GUEST_KERNEL_ELF)
-QEMUOPTS	+=-serial stdio
+QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER)
+QEMUOPTS	+=-device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
+QEMUOPTS    +=-serial stdio
 
 
 
@@ -48,3 +48,10 @@ clean:
 	cargo clean
 	cd minikernel && cargo clean
 	rm guest_kernel
+
+
+debug: build
+	@tmux new-session -d \
+		"$(QEMU) $(QEMUOPTS) -s -S" && \
+		tmux split-window -h "riscv64-unknown-elf-gdb -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
+		tmux -2 attach-session -d

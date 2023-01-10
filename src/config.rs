@@ -3,15 +3,21 @@
 pub const USER_STACK_SIZE: usize = 4096 * 2;
 pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
 pub const KERNEL_HEAP_SIZE: usize = 0x30_0000;
-pub const MEMORY_END: usize = 0x80800000;
+pub const MEMORY_START: usize = 0x80200000;
+pub const MEMORY_END: usize = 0x88000000;
 pub const PAGE_SIZE: usize = 0x1000;
 pub const PAGE_SIZE_BITS: usize = 0xc;
 
+/// 每个内核拥有 128 M 的空间
+pub const KERNEL_SPACE: usize = 128 * 1024 * 1024;
+
 // 客户操作系统内存映射
-pub const GUEST_KERNEL_PHY_START: usize = 0xC0000000;
-pub const GUEST_KERNEL_VIRT_STRAT: usize = 0xFFFFFFFFC0000000;
-pub const MAX_GUEST_KERNEL_PHY_END: usize = 0xEFFFFFFF;
-pub const MAX_GUEST_KERNEL_VIRT_END: usize = 0xFFFFFFFFEFFFFFFF;
+pub const GUEST_KERNEL_PHY_START_1: usize = MEMORY_END;
+pub const GUEST_KERNEL_VIRT_STRAT_1: usize = 0xFFFFFFFF88000000;
+
+pub const GUEST_KERNEL_PHY_START_2: usize = GUEST_KERNEL_PHY_START_1 + KERNEL_SPACE;
+pub const GUEST_KERNEL_VIRT_STRAT_2: usize = GUEST_KERNEL_VIRT_STRAT_1 + KERNEL_SPACE;
+
 
 /// 虚拟地址最高页为跳板页
 pub const TRAMPOLINE: usize = usize::MAX - PAGE_SIZE + 1;
