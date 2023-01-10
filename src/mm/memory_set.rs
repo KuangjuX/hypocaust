@@ -5,8 +5,7 @@ use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::GUEST_KERNEL;
-use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE};
-use crate::mm::load_guest_kernel;
+use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, GUEST_KERNEL_PHY_START_1};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -165,14 +164,22 @@ impl MemorySet {
             );
         }
 
+        memory_set.push(
+            MapArea::new(
+                Into::<VirtAddr>::into(0x9000_0000),
+                Into::<VirtAddr>::into(0x9000_1000),
+                MapType::Identical,
+                MapPermission::R | MapPermission::X
+            ),
+            None,
+        );
+
         memory_set
     }
 
     /// 加载客户操作系统
     /// 返回 MemorySet 以及入口地址
     pub fn map_guest_kernel(&mut self, guest_kernel_data: &[u8]) -> usize {
-        // let mut memory_set = Self::new_bare();
-        // map program headers of elf, with U flag
         let elf = xmas_elf::ElfFile::new(guest_kernel_data).unwrap();
         let elf_header = elf.header;
         let magic = elf_header.pt1.magic;
@@ -180,29 +187,36 @@ impl MemorySet {
         let ph_count = elf_header.pt2.ph_count();
         // 代码段：可读可执行
         // 数据段：可读
+        // 所有段映射用户空间
+        let phy_addr = GUEST_KERNEL_PHY_START_1 as *mut u8;
         for i in 0..ph_count {
             let ph = elf.program_header(i).unwrap();
             if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
                 let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
                 let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
-                let mut map_perm = MapPermission::U;
+                // let mut map_perm = MapPermission::U;
                 let ph_flags = ph.flags();
+                let mut map_perm = MapPermission { bits: 0 };
+                // 均设置为不可写，以便陷入虚拟机
                 if ph_flags.is_read() {
                     map_perm |= MapPermission::R;
                 }
-                // 均设置为不可写，以便陷入虚拟机
-                // if ph_flags.is_write() {
-                //     map_perm |= MapPermission::W;
-                // }
                 if ph_flags.is_execute() {
                     map_perm |= MapPermission::X;
                 }
+                unsafe{
+                    core::ptr::copy(guest_kernel_data.as_ptr().add(ph.offset() as usize), phy_addr, ph.file_size() as usize);
+                    println!(
+                        "[hypervisor] Copying {:#x} into {:#x}, len: {:#x}",
+                        guest_kernel_data.as_ptr().add(ph.offset() as usize) as usize,
+                        phy_addr as usize,
+                        ph.file_size() as usize
+                    );
+                }
+                
                 let map_area = MapArea::new(start_va, end_va, MapType::Identical, map_perm);
-                println!("[kernel] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
-                self.push(
-                    map_area,
-                    None,
-                );
+                println!("[hypervisor] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
+                self.push(map_area, None);
             }
         }
         elf.header.pt2.entry_point() as usize
@@ -395,13 +409,13 @@ bitflags! {
 
 #[allow(unused)]
 pub fn remap_test() {
-    use crate::config::GUEST_KERNEL_VIRT_STRAT_1;
+    use crate::config::GUEST_KERNEL_VIRT_START_1;
     let mut kernel_space = KERNEL_SPACE.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
     let mid_data: VirtAddr = ((sdata as usize + edata as usize) / 2).into();
 
-    let guest_kernel_text: VirtAddr = GUEST_KERNEL_VIRT_STRAT_1.into();
+    let guest_kernel_text: VirtAddr = GUEST_KERNEL_VIRT_START_1.into();
 
     assert!(!kernel_space
         .page_table
@@ -420,6 +434,12 @@ pub fn remap_test() {
         .executable(),);
 
     assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().executable());
+    unsafe{
+        let x = GUEST_KERNEL_VIRT_START_1 as usize;
+        // println!("[hypervisor] virt address: {:#x}", x);
+        let first_inst = core::ptr::read_volatile(x as *const u32);
+        println!("first instruction: {:#x}", first_inst);
+    }
     // 测试 guest ketnel
     println!("remap_test passed!");
 }

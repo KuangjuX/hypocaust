@@ -47,11 +47,14 @@ qemu: $(KERNEL_BIN)
 clean:
 	cargo clean
 	cd minikernel && cargo clean
-	rm guest_kernel
+	rm guest_kernel && rm guest.S && rm hyper.S
 
 
-debug: build
+debug: $(KERNEL_BIN)
 	@tmux new-session -d \
 		"$(QEMU) $(QEMUOPTS) -s -S" && \
 		tmux split-window -h "riscv64-unknown-elf-gdb -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
 		tmux -2 attach-session -d
+
+asm:
+	riscv64-unknown-elf-objdump -d target/riscv64gc-unknown-none-elf/debug/hypocaust > hyper.S 

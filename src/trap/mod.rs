@@ -69,15 +69,15 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
             println!("[kernel] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, cx.sepc);
-            exit_current_and_run_next();
+            // exit_current_and_run_next();
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             println!("[kernel] IllegalInstruction in application, kernel killed it.");
-            exit_current_and_run_next();
+            // exit_current_and_run_next();
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
-            suspend_current_and_run_next();
+            // suspend_current_and_run_next();
         }
         _ => {
             panic!(
@@ -121,14 +121,13 @@ pub fn trap_return() -> ! {
 pub fn trap_from_kernel() -> ! {
     let scause= scause::read();
     match scause.cause() {
-        Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) => {
+        Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) | Trap::Exception(Exception::LoadPageFault)=> {
             let stval = stval::read();
             let sepc = sepc::read();
-            panic!("sepc: {:#x}, stval: {:#x}", sepc, stval);
+            panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), sepc, stval);
         },
-        _ => {}
+        _ => { panic!("scause: {:?}", scause.cause())}
     }
-    panic!()
 }
 
 pub use context::TrapContext;
