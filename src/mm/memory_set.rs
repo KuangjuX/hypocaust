@@ -194,9 +194,8 @@ impl MemorySet {
             if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
                 let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
                 let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
-                // let mut map_perm = MapPermission::U;
+                let mut map_perm = MapPermission::U;
                 let ph_flags = ph.flags();
-                let mut map_perm = MapPermission { bits: 0 };
                 // 均设置为不可写，以便陷入虚拟机
                 if ph_flags.is_read() {
                     map_perm |= MapPermission::R;
@@ -438,12 +437,12 @@ pub fn remap_test() {
         .executable(),);
 
     assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().executable());
-    unsafe{
-        let x = GUEST_KERNEL_VIRT_START_1 as usize;
-        // println!("[hypervisor] virt address: {:#x}", x);
-        let first_inst = core::ptr::read_volatile(x as *const u32);
-        println!("first instruction: {:#x}", first_inst);
-    }
+    // unsafe{
+    //     let x = GUEST_KERNEL_VIRT_START_1 as usize;
+    //     // println!("[hypervisor] virt address: {:#x}", x);
+    //     let first_inst = core::ptr::read_volatile(x as *const u32);
+    //     println!("first instruction: {:#x}", first_inst);
+    // }
     // 测试 guest ketnel
     println!("remap_test passed!");
 }

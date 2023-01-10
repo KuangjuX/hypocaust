@@ -44,6 +44,8 @@ pub mod task;
 mod timer;
 pub mod trap;
 
+use riscv::register::{sstatus, sepc};
+use config::GUEST_KERNEL_VIRT_START_1;
 
 
 core::arch::global_asm!(include_str!("entry.asm"));
@@ -82,46 +84,46 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     // timer::set_next_trigger();
     // 返回运行 guest kernel
 
-    // sepc::write(GUEST_KERNEL_VIRT_START_1);
-    // unsafe{
-    //     sstatus::set_spp(sstatus::SPP::User);
-    //     sstatus::set_sie();
-    // }
-    // unsafe{
-    //     core::arch::asm!(
-    //         "li ra, 0",
-    //         "li sp, 0",
-    //         "li gp, 0",
-    //         "li tp, 0",
-    //         "li t0, 0",
-    //         "li t1, 0",
-    //         "li t2, 0",
-    //         "li s0, 0",
-    //         "li s1, 0",
-    //         "li a0, 0",
-    //         "li a2, 0",
-    //         "li a3, 0",
-    //         "li a4, 0",
-    //         "li a5, 0",
-    //         "li a6, 0",
-    //         "li a7, 0",
-    //         "li s2, 0",
-    //         "li s3, 0",
-    //         "li s4, 0",
-    //         "li s5, 0",
-    //         "li s6, 0",
-    //         "li s7, 0",
-    //         "li s8, 0",
-    //         "li s9, 0",
-    //         "li s10, 0",
-    //         "li s11, 0",
-    //         "li t3, 0",
-    //         "li t4, 0",
-    //         "li t5, 0",
-    //         "li t6, 0",
-    //         "sret"
-    //     );
-    // }
+    sepc::write(GUEST_KERNEL_VIRT_START_1);
+    unsafe{
+        sstatus::set_spp(sstatus::SPP::User);
+        sstatus::set_sie();
+    }
+    unsafe{
+        core::arch::asm!(
+            "li ra, 0",
+            "li sp, 0",
+            "li gp, 0",
+            "li tp, 0",
+            "li t0, 0",
+            "li t1, 0",
+            "li t2, 0",
+            "li s0, 0",
+            "li s1, 0",
+            "li a0, 0",
+            "li a2, 0",
+            "li a3, 0",
+            "li a4, 0",
+            "li a5, 0",
+            "li a6, 0",
+            "li a7, 0",
+            "li s2, 0",
+            "li s3, 0",
+            "li s4, 0",
+            "li s5, 0",
+            "li s6, 0",
+            "li s7, 0",
+            "li s8, 0",
+            "li s9, 0",
+            "li s10, 0",
+            "li s11, 0",
+            "li t3, 0",
+            "li t4, 0",
+            "li t5, 0",
+            "li t6, 0",
+            "sret"
+        );
+    }
     loop{}
 }
 

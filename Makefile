@@ -58,4 +58,4 @@ debug: $(KERNEL_BIN)
 
 asm:
 	riscv64-unknown-elf-objdump -d target/riscv64gc-unknown-none-elf/debug/hypocaust > hyper.S 
-	riscv64-unknown-elf-objdump -d guest_kernel > hyper.S 
+	riscv64-unknown-elf-objdump -d guest_kernel > guest.S 
