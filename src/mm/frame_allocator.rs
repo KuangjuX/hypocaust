@@ -9,6 +9,7 @@ use core::fmt::{self, Debug, Formatter};
 use lazy_static::*;
 
 /// manage a frame which has the same lifecycle as the tracker
+#[derive(Clone)]
 pub struct FrameTracker {
     pub ppn: PhysPageNum,
 }

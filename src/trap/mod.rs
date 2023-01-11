@@ -14,10 +14,9 @@
 mod context;
 
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::syscall::syscall;
-use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
-};
+// use crate::task::{
+//     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
+// };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
 use riscv::register::{
@@ -56,23 +55,24 @@ pub fn enable_timer_interrupt() {
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
-    let cx = current_trap_cx();
+    // let cx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            cx.sepc += 4;
-            cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
+            // cx.sepc += 4;
+            // cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
+            println!("[hypervisor] user env call");
         }
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            println!("[kernel] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, cx.sepc);
+            // println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, cx.sepc);
             // exit_current_and_run_next();
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            println!("[kernel] IllegalInstruction in application, kernel killed it.");
+            println!("[hypervisor] IllegalInstruction in application, kernel killed it.");
             // exit_current_and_run_next();
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
@@ -87,17 +87,18 @@ pub fn trap_handler() -> ! {
             );
         }
     }
-    trap_return();
+    panic!()
+    // trap_return();
 }
 
 #[no_mangle]
 /// set the new addr of __restore asm function in TRAMPOLINE page,
 /// set the reg a0 = trap_cx_ptr, reg a1 = phy addr of usr page table,
 /// finally, jump to new addr of __restore asm function
-pub fn trap_return() -> ! {
+pub fn trap_return(user_satp: usize) -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
-    let user_satp = current_user_token();
+    println!("[hypervisor] user satp: {:#x}", user_satp);
     extern "C" {
         fn __alltraps();
         fn __restore();

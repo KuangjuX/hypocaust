@@ -21,6 +21,20 @@
 
 Guest Virtual Address -> Guest Physical Address(Host Virtual Address) -> Host Physical Address
 
+## Supported Platforms
+- QEMU virt machine type
+
+## RoadMap
+- [x] Load guest kernel && Run guest kernel
+- [ ] Trap and emulate of privileged instructions(CSR related and SFENCE>VMA)
+- [ ] Shadow page tables
+- [ ] Update PTE accessed and dirty bits
+- [ ] Timers
+- [ ] Expose and/or emulate peripherals
+- [ ] passthrough virtio block and networkd devices
+- [ ] multicore supported
+- [ ] multiguest supported
+
 ## References
 - [rcore-os/rCore-Tutorial-v3](https://github.com/rcore-os/rCore-Tutorial-v3)
 - [mit-pdos/RVirt](https://github.com/mit-pdos/RVirt)

@@ -39,13 +39,14 @@ mod loader;
 mod mm;
 mod sbi;
 mod sync;
-pub mod syscall;
 pub mod task;
 mod timer;
 pub mod trap;
+mod guest;
 
-use riscv::register::{sstatus, sepc};
-use config::GUEST_KERNEL_VIRT_START_1;
+
+use crate::{mm::MemorySet, guest::GuestKernel};
+
 
 
 core::arch::global_asm!(include_str!("entry.asm"));
@@ -77,54 +78,20 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     clear_bss();
     println!("[hypervisor] Hello Hypocaust");
     println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
-    mm::init();
+    // 初始化堆及帧分配器
+    mm::heap_init();
+    let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
+    // 初始化虚拟内存
+    mm::vm_init(&guest_kernel_memory);
     trap::init();
     mm::remap_test();
+    mm::guest_kernel_test();
     // trap::enable_timer_interrupt();
     // timer::set_next_trigger();
-    // 返回运行 guest kernel
-
-    sepc::write(GUEST_KERNEL_VIRT_START_1);
-    unsafe{
-        sstatus::set_spp(sstatus::SPP::User);
-        sstatus::set_sie();
-    }
-    unsafe{
-        core::arch::asm!(
-            "li ra, 0",
-            "li sp, 0",
-            "li gp, 0",
-            "li tp, 0",
-            "li t0, 0",
-            "li t1, 0",
-            "li t2, 0",
-            "li s0, 0",
-            "li s1, 0",
-            "li a0, 0",
-            "li a2, 0",
-            "li a3, 0",
-            "li a4, 0",
-            "li a5, 0",
-            "li a6, 0",
-            "li a7, 0",
-            "li s2, 0",
-            "li s3, 0",
-            "li s4, 0",
-            "li s5, 0",
-            "li s6, 0",
-            "li s7, 0",
-            "li s8, 0",
-            "li s9, 0",
-            "li s10, 0",
-            "li s11, 0",
-            "li t3, 0",
-            "li t4, 0",
-            "li t5, 0",
-            "li t6, 0",
-            "sret"
-        );
-    }
-    loop{}
+    // 创建用户态的 guest kernel 内存空间
+    let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
+    let guest_kernel = GuestKernel::new(user_guest_kernel_memory, 0);
+    guest_kernel.run();
 }
 
 
