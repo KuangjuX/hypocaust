@@ -30,7 +30,5 @@ __switch:
     .endr
     # restore kernel stack of next task
     ld sp, 8(a1)
-    # 传递 user_satp
-    mv a0, a2
     ret
 

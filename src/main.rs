@@ -45,7 +45,7 @@ pub mod trap;
 mod guest;
 
 
-use crate::{mm::MemorySet, guest::GuestKernel};
+use crate::{mm::MemorySet, guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
 
 
 
@@ -91,7 +91,9 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     // 创建用户态的 guest kernel 内存空间
     let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
     let guest_kernel = GuestKernel::new(user_guest_kernel_memory, 0);
-    guest_kernel.run();
+    GUEST_KERNEL_MANAGER.push(guest_kernel);
+    // 开始运行 guest kernel
+    run_guest_kernel();
 }
 
 

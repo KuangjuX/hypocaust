@@ -14,6 +14,7 @@
 mod context;
 
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT};
+use crate::guest::current_user_token;
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
 // };
@@ -72,6 +73,27 @@ pub fn trap_handler() -> ! {
             // exit_current_and_run_next();
         }
         Trap::Exception(Exception::IllegalInstruction) => {
+            // 读出发生异常的 guest kernel 物理地址(虚拟地址)
+            // 目前没有影子页表，可以直接读取
+            let epc = sepc::read();
+            let i1 = unsafe{ core::ptr::read(epc as *const u16) };
+            let len = riscv_decode::instruction_length(i1);
+            let inst = match len {
+                2 => i1 as u32,
+                4 => unsafe{ core::ptr::read(epc as *const u32) },
+                _ => unreachable!()
+            };
+            if let Ok(inst) = riscv_decode::decode(inst) {
+                match inst {
+                    riscv_decode::Instruction::Csrrw(i) => {
+                    },
+                    _ => {
+                        panic!("[hypervisor] Unrecognized instruction!");
+                    }
+                }
+            }else{
+                panic!("[hypervisor] Fail to decode expection instruction");
+            }
             println!("[hypervisor] IllegalInstruction in application, kernel killed it.");
             // exit_current_and_run_next();
         }
@@ -95,9 +117,10 @@ pub fn trap_handler() -> ! {
 /// set the new addr of __restore asm function in TRAMPOLINE page,
 /// set the reg a0 = trap_cx_ptr, reg a1 = phy addr of usr page table,
 /// finally, jump to new addr of __restore asm function
-pub fn trap_return(user_satp: usize) -> ! {
+pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
+    let user_satp = current_user_token();
     println!("[hypervisor] user satp: {:#x}", user_satp);
     extern "C" {
         fn __alltraps();

@@ -2,7 +2,64 @@ use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},
 
 
 mod switch;
+mod context;
+use alloc::vec::Vec;
 use switch::__switch;
+use lazy_static::lazy_static;
+use crate::sync::UPSafeCell;
+
+
+lazy_static! {
+    pub static ref GUEST_KERNEL_MANAGER: GuestKernelManager = GuestKernelManager::new();
+}
+
+pub struct GuestKernelManager {
+    pub inner: UPSafeCell<GuestKernelManagerInner>
+}
+
+pub struct GuestKernelManagerInner {
+    pub kernels: Vec<GuestKernel>,
+    pub run_id: usize
+}
+
+impl GuestKernelManager {
+    pub fn new() -> Self {
+        Self {
+           inner: unsafe{
+            UPSafeCell::new(
+                GuestKernelManagerInner{
+                    kernels: Vec::new(),
+                    run_id: 0
+                }
+            )
+           }
+        }
+    }
+
+    pub fn push(&self, kernel: GuestKernel) {
+        self.inner.exclusive_access().kernels.push(kernel)
+    }
+}
+
+pub fn run_guest_kernel() -> ! {
+    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let guest_kernel = &inner.kernels[id];
+    let task_cx_ptr = &guest_kernel.task_cx as *const TaskContext;
+    drop(inner);
+    let mut _unused = TaskContext::zero_init();
+    // before this, we should drop local variables that must be dropped manually
+    unsafe {
+        __switch(&mut _unused as *mut _, task_cx_ptr);
+    }
+    panic!("unreachable in run_first_task!");
+}
+
+pub fn current_user_token() -> usize {
+    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
+    GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
+}
+
 /// Guest Kernel 结构体
 pub struct GuestKernel {
     pub memory: MemorySet,
@@ -46,14 +103,5 @@ impl GuestKernel {
         self.memory.token()
     }
 
-    pub fn run(&self) -> ! {
-        let next_task_cx_ptr = &self.task_cx as *const TaskContext;
-        let mut _unused = TaskContext::zero_init();
-        // before this, we should drop local variables that must be dropped manually
-        unsafe {
-            __switch(&mut _unused as *mut _, next_task_cx_ptr, self.get_user_token());
-        }
-        panic!("unreachable in run_first_task!");
-    }
 }
 
