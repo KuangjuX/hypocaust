@@ -2,7 +2,7 @@
 //! controls all the frames in the operating system.
 
 use super::{PhysAddr, PhysPageNum};
-use crate::config::MEMORY_END;
+use crate::constants::layout::MEMORY_END;
 use crate::sync::UPSafeCell;
 use alloc::vec::Vec;
 use core::fmt::{self, Debug, Formatter};

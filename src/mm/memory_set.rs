@@ -4,7 +4,7 @@ use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
-use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, GUEST_KERNEL_PHY_START_1};
+use crate::constants::layout::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, GUEST_KERNEL_PHY_START_1};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -473,7 +473,7 @@ pub fn remap_test() {
 
 #[allow(unused)]
 pub fn guest_kernel_test() {
-    use crate::config::GUEST_KERNEL_VIRT_START_1;
+    use crate::constants::layout::GUEST_KERNEL_VIRT_START_1;
     let mut kernel_space = KERNEL_SPACE.exclusive_access();
 
     let guest_kernel_text: VirtAddr = GUEST_KERNEL_VIRT_START_1.into();

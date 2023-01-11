@@ -1,4 +1,4 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, config::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
 
 
 
@@ -10,6 +10,8 @@ use alloc::vec::Vec;
 use switch::__switch;
 use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
+
+use self::context::ShadowState;
 
 
 lazy_static! {
@@ -63,11 +65,22 @@ pub fn current_user_token() -> usize {
     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
 }
 
+
+pub fn get_shadow_csr(csr: usize) -> usize {
+    // let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    // let id = inner.run_id;
+    // let shadow_state = &mut inner.kernels[id].shadow_state;
+    // drop(inner);
+    // shadow_state
+    0
+}
+
 /// Guest Kernel 结构体
 pub struct GuestKernel {
     pub memory: MemorySet,
     pub trap_cx_ppn: PhysPageNum,
-    pub task_cx: TaskContext
+    pub task_cx: TaskContext,
+    pub shadow_state: ShadowState
 }
 
 impl GuestKernel {
@@ -88,7 +101,8 @@ impl GuestKernel {
         let guest_kernel = Self { 
             memory,
             trap_cx_ppn,
-            task_cx: TaskContext::goto_trap_return(kernel_stack_top)
+            task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+            shadow_state: ShadowState::new()
         };
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();

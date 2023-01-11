@@ -33,7 +33,7 @@ mod board;
 
 #[macro_use]
 mod console;
-mod config;
+mod constants;
 mod lang_items;
 mod loader;
 mod mm;

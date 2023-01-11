@@ -1,11 +1,39 @@
-pub struct SupervisorRegState {
+
+
+pub struct ShadowState {
+    // sedeleg: usize, -- Hard-wired to zero
+    // sideleg: usize, -- Hard-wired to zero
+
     sstatus: usize,
+    sie: usize,
+    // sip: usize, -- checked dynamically on read
+    stvec: usize,
+    // scounteren: usize, -- Hard-wired to zero
+    sscratch: usize,
+    sepc: usize,
+    scause: usize,
+    stval: usize,
     satp: usize,
-    sscratch: usize
+
+    // Whether the guest is in S-Mode.
+    smode: bool,
 }
 
-impl SupervisorRegState {
+impl ShadowState {
+    pub const fn new() -> Self {
+        Self {
+            sstatus: 0,
+            stvec: 0,
+            sie: 0,
+            sscratch: 0,
+            sepc: 0,
+            scause: 0,
+            stval: 0,
+            satp: 0,
 
+            smode: true,
+        }
+    }
 }
 
 use crate::trap::trap_return;
