@@ -1,8 +1,11 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, config::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}, task::TaskContext};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, config::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
+
 
 
 mod switch;
 mod context;
+
+use context::TaskContext;
 use alloc::vec::Vec;
 use switch::__switch;
 use lazy_static::lazy_static;

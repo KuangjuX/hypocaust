@@ -39,7 +39,6 @@ mod loader;
 mod mm;
 mod sbi;
 mod sync;
-pub mod task;
 mod timer;
 pub mod trap;
 mod guest;
