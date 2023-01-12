@@ -1,4 +1,4 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, PhysAddr},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
 use crate::constants::csr;
 
 
@@ -63,6 +63,15 @@ pub fn run_guest_kernel() -> ! {
 pub fn current_user_token() -> usize {
     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
+}
+
+pub fn current_trap_context_paddr() -> usize {
+    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
+    let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory;
+    let trap_context: VirtAddr = TRAP_CONTEXT.into();
+    let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
+    let trap_context_paddr: PhysAddr = trap_context_ppn.into();
+    trap_context_paddr.into()
 }
 
 

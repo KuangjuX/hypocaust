@@ -1,6 +1,8 @@
     .section .text.entry
     .globl _start
 _start:
+    li t0, 0xdeaf
+    csrw sscratch, t0
     la sp, boot_stack_top
     call rust_main
 

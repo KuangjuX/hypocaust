@@ -14,7 +14,8 @@
 mod context;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::current_user_token;
+use crate::guest::{current_user_token, current_trap_context_paddr, write_shadow_csr};
+use crate::mm::PhysAddr;
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
 // };
@@ -86,7 +87,17 @@ pub fn trap_handler() -> ! {
             if let Ok(inst) = riscv_decode::decode(inst) {
                 match inst {
                     riscv_decode::Instruction::Csrrw(i) => {
-                        
+                        let csr = i.csr() as usize;
+                        let rs = i.rs1() as usize;
+                        println!("[hypervisor] csr: {}, rs: {}", csr, rs);
+                        let trap_context = current_trap_context_paddr() as *mut usize;
+                        // 向 Shadow CSR 写入
+                        unsafe{
+                            let addr = trap_context.add(rs as usize);
+                            let val = core::ptr::read(addr);
+                            write_shadow_csr(csr, val);
+                        }
+
                     },
                     _ => {
                         panic!("[hypervisor] Unrecognized instruction!");
@@ -110,8 +121,7 @@ pub fn trap_handler() -> ! {
             );
         }
     }
-    panic!()
-    // trap_return();
+    trap_return();
 }
 
 #[no_mangle]
