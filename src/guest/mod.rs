@@ -65,13 +65,17 @@ pub fn current_user_token() -> usize {
     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
 }
 
-pub fn current_trap_context_paddr() -> usize {
+pub fn current_trap_context_ppn() -> PhysPageNum {
     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
     let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory;
     let trap_context: VirtAddr = TRAP_CONTEXT.into();
     let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
-    let trap_context_paddr: PhysAddr = trap_context_ppn.into();
-    trap_context_paddr.into()
+    trap_context_ppn
+}
+
+pub fn current_trap_cx() -> &'static mut TrapContext {
+    let trap_context_ppn = current_trap_context_ppn();
+    trap_context_ppn.get_mut() 
 }
 
 

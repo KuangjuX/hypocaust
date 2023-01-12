@@ -14,7 +14,7 @@
 mod context;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::{current_user_token, current_trap_context_paddr, write_shadow_csr};
+use crate::guest::{current_user_token, write_shadow_csr, current_trap_cx};
 use crate::mm::PhysAddr;
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
@@ -57,7 +57,7 @@ pub fn enable_timer_interrupt() {
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
-    // let cx = current_trap_cx();
+    let ctx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
     match scause.cause() {
@@ -65,13 +65,15 @@ pub fn trap_handler() -> ! {
             // cx.sepc += 4;
             // cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
             println!("[hypervisor] user env call");
+            panic!()
         }
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            // println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, cx.sepc);
+            println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, ctx.sepc);
             // exit_current_and_run_next();
+            panic!()
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             // 读出发生异常的 guest kernel 物理地址(虚拟地址)
@@ -90,14 +92,12 @@ pub fn trap_handler() -> ! {
                         let csr = i.csr() as usize;
                         let rs = i.rs1() as usize;
                         println!("[hypervisor] csr: {}, rs: {}", csr, rs);
-                        let trap_context = current_trap_context_paddr() as *mut usize;
                         // 向 Shadow CSR 写入
-                        unsafe{
-                            let addr = trap_context.add(rs as usize);
-                            let val = core::ptr::read(addr);
-                            write_shadow_csr(csr, val);
-                        }
-
+                        let val = ctx.x[rs];
+                        println!("[hypervisor] x{}: {:#x}", rs, val);
+                        write_shadow_csr(csr, val);
+                        // 更新地址
+                        ctx.sepc += len;
                     },
                     _ => {
                         panic!("[hypervisor] Unrecognized instruction!");
@@ -106,8 +106,6 @@ pub fn trap_handler() -> ! {
             }else{
                 panic!("[hypervisor] Fail to decode expection instruction");
             }
-            println!("[hypervisor] IllegalInstruction in application, kernel killed it.");
-            // exit_current_and_run_next();
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
@@ -132,7 +130,7 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
     let user_satp = current_user_token();
-    println!("[hypervisor] user satp: {:#x}", user_satp);
+    // println!("[hypervisor] user satp: {:#x}", user_satp);
     extern "C" {
         fn __alltraps();
         fn __restore();
