@@ -1,5 +1,5 @@
 use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
-
+use crate::constants::csr;
 
 
 mod switch;
@@ -67,12 +67,37 @@ pub fn current_user_token() -> usize {
 
 
 pub fn get_shadow_csr(csr: usize) -> usize {
-    // let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    // let id = inner.run_id;
-    // let shadow_state = &mut inner.kernels[id].shadow_state;
-    // drop(inner);
-    // shadow_state
-    0
+    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let shadow_state = &mut inner.kernels[id].shadow_state;
+    match csr {
+        csr::sstatus => { shadow_state.get_sstatus() }
+        csr::stvec => { shadow_state.get_stvec() }
+        csr::sie => { shadow_state.get_sie() }
+        csr::sscratch => { shadow_state.get_sscratch() }
+        csr::sepc => { shadow_state.get_sepc() }
+        csr::scause => { shadow_state.get_scause() }
+        csr::stval => { shadow_state.get_stval() }
+        csr::satp => { shadow_state.get_satp() }
+        _ => { panic!("[hypervisor] Unrecognized") }
+    }
+}
+
+pub fn write_shadow_csr(csr: usize, val: usize) {
+    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let shadow_state = &mut inner.kernels[id].shadow_state;
+    match csr {
+        csr::sstatus => { shadow_state.write_sstatus(val) }
+        csr::stvec => { shadow_state.write_stvec(val) }
+        csr::sie => { shadow_state.write_sie(val) }
+        csr::sscratch => { shadow_state.write_sscratch(val) }
+        csr::sepc => { shadow_state.write_sepc(val) }
+        csr::scause => { shadow_state.write_scause(val) }
+        csr::stval => { shadow_state.write_stval(val) }
+        csr::satp => { shadow_state.write_satp(val) }
+        _ => { panic!("[hypervisor] Unrecognized") }
+    }
 }
 
 /// Guest Kernel 结构体

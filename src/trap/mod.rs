@@ -86,6 +86,7 @@ pub fn trap_handler() -> ! {
             if let Ok(inst) = riscv_decode::decode(inst) {
                 match inst {
                     riscv_decode::Instruction::Csrrw(i) => {
+                        
                     },
                     _ => {
                         panic!("[hypervisor] Unrecognized instruction!");

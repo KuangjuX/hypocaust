@@ -34,6 +34,28 @@ impl ShadowState {
             smode: true,
         }
     }
+
+    pub fn get_sstatus(&self) -> usize { self.sstatus }
+    pub fn get_stvec(&self) -> usize { self.stvec }
+    pub fn get_sie(&self) -> usize { self.sie }
+    pub fn get_sscratch(&self) -> usize { self.sscratch }
+    pub fn get_sepc(&self) -> usize { self.sepc }
+    pub fn get_scause(&self) -> usize { self.scause }
+    pub fn get_stval(&self) -> usize { self.stval }
+    pub fn get_satp(&self) -> usize { self.satp }
+
+    pub fn write_sstatus(&mut self, val: usize) { self.sstatus  = val}
+    pub fn write_stvec(&mut self, val: usize) { self.stvec = val }
+    pub fn write_sie(&mut self, val: usize) { self.sie = val}
+    pub fn write_sscratch(&mut self, val: usize) { self.sscratch = val }
+    pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
+    pub fn write_scause(&mut self, val: usize)  { self.scause = val }
+    pub fn write_stval(&mut self, val: usize) { self.stval  = val }
+    pub fn write_satp(&mut self, val: usize) { self.satp = val }
+
+    pub fn smode(&self) -> bool { self.smode } 
+    // 是否开启分页
+    pub fn paged(&self) -> bool { self.satp != 0 }
 }
 
 use crate::trap::trap_return;

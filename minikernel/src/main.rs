@@ -29,7 +29,21 @@ pub fn clear_bss() {
 #[no_mangle]
 pub fn rust_main() -> ! {
     clear_bss();
+    csrw_test();
     println!("Hello, Guest Kernel!");
     loop{}
 }
+
+pub fn csrw_test() {
+    core::arch::asm!(
+        "li t0, 0xdeaf"
+        "csrw sscratch, t0"
+    );
+}
+
+// pub fn csrr_test() {
+//     core::arch::asm!(
+
+//     );
+// }
 
