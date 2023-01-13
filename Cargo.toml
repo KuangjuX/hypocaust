@@ -11,7 +11,7 @@ lazy_static = { version = "1.4.0", features = ["spin_no_std"] }
 buddy_system_allocator = "0.6"
 bitflags = "1.2.1"
 xmas-elf = "0.7.0"
-riscv-decode = { git = "https://github.com/fintelia/riscv-decode"}
+riscv-decode = { path = "riscv-decode" }
 
 [features]
 embed_guest_kernel = []

@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
-#![deny(warnings)]
+// #![deny(warnings)]
 
 #[macro_use]
 mod sbi;
@@ -28,22 +28,28 @@ pub fn clear_bss() {
 
 #[no_mangle]
 pub fn rust_main() -> ! {
+    unsafe{ 
+        csrw_test();
+        csrr_test(); 
+    }
     clear_bss();
-    // csrw_test();
     println!("Hello, Guest Kernel!");
     loop{}
 }
 
-// pub fn csrw_test() {
-//     core::arch::asm!(
-//         "li t0, 0xdeaf"
-//         "csrw sscratch, t0"
-//     );
-// }
+pub unsafe fn csrw_test() {
+    core::arch::asm!(
+        "li t0, 0xdeaf",
+        "csrw sscratch, t0"
+    );
+}
 
-// pub fn csrr_test() {
-//     core::arch::asm!(
-
-//     );
-// }
+pub unsafe fn csrr_test() {
+    let mut x = 0;
+    core::arch::asm!(
+        "csrr {}, sscratch",
+        out(reg) x
+    );
+    assert_eq!(x, 0xdeaf);
+}
 

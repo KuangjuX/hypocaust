@@ -71,8 +71,28 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}, kernel killed it.", stval, ctx.sepc);
-            // exit_current_and_run_next();
+            println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}.", stval, ctx.sepc);
+            let epc = ctx.sepc;
+            let i1 = unsafe{ core::ptr::read(epc as *const u16) };
+            let len = riscv_decode::instruction_length(i1);
+            let inst = match len {
+                2 => i1 as u32,
+                4 => unsafe{ core::ptr::read(epc as *const u32) },
+                _ => unreachable!()
+            };
+            println!("[hypervisor] inst: {:#x}", inst);
+            if let Ok(inst) = riscv_decode::decode(inst) {
+                match inst {
+                    riscv_decode::Instruction::Sd(i) => {
+                        let rs1 = i.rs1();
+                        let rs2 = i.rs2();
+                        println!("[hypervisor] rs1: {}, rs2: {}", rs1, rs2);
+                    },
+                    _ => { panic!("[hypervisor] Unrecognized instruction") }
+                }
+            }else{
+                println!("[hypervisr] Fail to parse instruction");
+            }
             panic!()
         }
         Trap::Exception(Exception::IllegalInstruction) => {
@@ -88,6 +108,13 @@ pub fn trap_handler() -> ! {
             };
             if let Ok(inst) = riscv_decode::decode(inst) {
                 match inst {
+                    riscv_decode::Instruction::Csrrc(i) => {
+
+                    }
+                    riscv_decode::Instruction::Csrrs(i) => {
+                        
+                    }
+                    // 写 CSR 指令
                     riscv_decode::Instruction::Csrrw(i) => {
                         let csr = i.csr() as usize;
                         let rs = i.rs1() as usize;
