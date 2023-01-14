@@ -34,7 +34,7 @@ pub fn rust_main() -> ! {
         csrw_test();
         csrr_test(); 
     }
-    loop{}
+    panic!("panic in rust_main.")
 }
 
 pub unsafe fn csrw_test() {
@@ -47,12 +47,9 @@ pub unsafe fn csrw_test() {
 pub unsafe fn csrr_test() {
     let mut x = 0;
     core::arch::asm!(
-        "li t0, 0xdeaf",
-        "csrw sscratch, t0",
         "csrr {}, sscratch",
         out(reg) x
     );
-    // println!("x: {:#x}", x);
     assert_eq!(x, 0xdeaf);
 }
 

@@ -38,7 +38,6 @@ mod board;
 mod console;
 mod constants;
 mod lang_items;
-mod loader;
 mod mm;
 mod sbi;
 mod sync;

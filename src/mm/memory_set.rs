@@ -188,7 +188,6 @@ impl MemorySet {
             user_area.map_perm |= MapPermission::U;
             // 均设置为不可写，以便陷入虚拟机
             user_area.map_perm &= !MapPermission::W;
-            println!("[hypervisor] perm: {:?}", user_area.map_perm);
             memory_set.push(user_area, None);
         }
         // 创建跳板页映射
@@ -482,8 +481,7 @@ pub fn guest_kernel_test() {
     assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().readable());
     // 尝试读数据
     unsafe{
-        let inst = core::ptr::read(GUEST_KERNEL_VIRT_START_1 as *const u32);
-        println!("[hypervisor] inst: {:#x}", inst);
+        core::ptr::read(GUEST_KERNEL_VIRT_START_1 as *const u32);
     }
     // 测试 guest ketnel
     println!("[hypervisor] guest kernel test passed!");
