@@ -87,8 +87,8 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     trap::init();
     mm::remap_test();
     mm::guest_kernel_test();
-    // trap::enable_timer_interrupt();
-    // timer::set_next_trigger();
+    trap::enable_timer_interrupt();
+    timer::set_next_trigger();
     // 创建用户态的 guest kernel 内存空间
     let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
     let guest_kernel = GuestKernel::new(user_guest_kernel_memory, 0);
