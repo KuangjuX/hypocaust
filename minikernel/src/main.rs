@@ -42,6 +42,7 @@ pub unsafe fn csrw_test() {
         "li t0, 0xdeaf",
         "csrw sscratch, t0"
     );
+    println!("[kernel] csrw_test passed!");
 }
 
 pub unsafe fn csrr_test() {
@@ -51,5 +52,6 @@ pub unsafe fn csrr_test() {
         out(reg) x
     );
     assert_eq!(x, 0xdeaf);
+    println!("[kernel] csrr_test passed!");
 }
 

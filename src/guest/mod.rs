@@ -78,6 +78,12 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
     trap_context_ppn.get_mut() 
 }
 
+pub fn translate_guest_vaddr(vaddr: usize) -> usize {
+    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let kernel = &inner.kernels[inner.run_id];
+    let state = &kernel.shadow_state;
+    state.translate_guest_virtaddr(vaddr)
+}
 
 pub fn get_shadow_csr(csr: usize) -> usize {
     let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();

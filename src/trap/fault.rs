@@ -1,9 +1,9 @@
 use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr };
 
 pub fn instruction_handler(ctx: &mut TrapContext) {
-    let epc = ctx.sepc;
+    let epc = translate_guest_vaddr(ctx.sepc);
     let i1 = unsafe{ core::ptr::read(epc as *const u16) };
     let len = riscv_decode::instruction_length(i1);
     let inst = match len {
@@ -32,11 +32,11 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                     i.imm() as isize
                 };
                 // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_virt_addr = ctx.x[rs1] as isize + offset; 
-                let guest_phy_addr = guest_virt_addr;
+                let guest_vaddr = ctx.x[rs1] as isize + offset; 
+                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
                 // 将 x[rs2] 的值写入内存中
                 unsafe{
-                    core::ptr::write(guest_phy_addr as *mut usize, ctx.x[rs2]);
+                    core::ptr::write(guest_paddr as *mut usize, ctx.x[rs2]);
                 }
             },
             riscv_decode::Instruction::Sw(i) => {
@@ -48,11 +48,11 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                     i.imm() as isize
                 };
                 // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_virt_addr = ctx.x[rs1] as isize + offset; 
-                let guest_phy_addr = guest_virt_addr;
+                let guest_vaddr = ctx.x[rs1] as isize + offset; 
+                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
                 // 将 x[rs2] 的值写入内存中
                 unsafe{
-                    core::ptr::write(guest_phy_addr as *mut u32, (ctx.x[rs2] & 0xffff_ffff) as u32);
+                    core::ptr::write(guest_paddr as *mut u32, (ctx.x[rs2] & 0xffff_ffff) as u32);
                 }
             }
             riscv_decode::Instruction::Sb(i) => {
@@ -64,11 +64,11 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                     i.imm() as isize
                 };
                 // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_virt_addr = ctx.x[rs1] as isize + offset; 
-                let guest_phy_addr = guest_virt_addr;
+                let guest_vaddr = ctx.x[rs1] as isize + offset; 
+                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
                 // 将 x[rs2] 的值写入内存中
                 unsafe{
-                    core::ptr::write(guest_phy_addr as *mut u8, (ctx.x[rs2] & 0xff) as u8);
+                    core::ptr::write(guest_paddr as *mut u8, (ctx.x[rs2] & 0xff) as u8);
                 }
             }
             riscv_decode::Instruction::Csrrc(i) => {

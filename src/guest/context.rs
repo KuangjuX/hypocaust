@@ -1,4 +1,4 @@
-
+use crate::mm::{PageTable, VirtPageNum};
 
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -17,6 +17,9 @@ pub struct ShadowState {
 
     // Whether the guest is in S-Mode.
     smode: bool,
+
+    // 根目录页表
+    root_page_table: Option<PageTable>
 }
 
 impl ShadowState {
@@ -32,6 +35,8 @@ impl ShadowState {
             satp: 0,
 
             smode: true,
+
+            root_page_table: None
         }
     }
 
@@ -51,11 +56,28 @@ impl ShadowState {
     pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
     pub fn write_scause(&mut self, val: usize)  { self.scause = val }
     pub fn write_stval(&mut self, val: usize) { self.stval  = val }
-    pub fn write_satp(&mut self, val: usize) { self.satp = val }
+    pub fn write_satp(&mut self, val: usize) { 
+        // 构造 shadow page table
+        self.satp = val; 
+        let shadow_page_table = PageTable::from_token(self.satp);
+        self.root_page_table = Some(shadow_page_table);
+    }
 
     pub fn smode(&self) -> bool { self.smode } 
     // 是否开启分页
     pub fn paged(&self) -> bool { self.satp != 0 }
+
+    /// 将 guest 虚拟地址翻译成 guest 物理地址(即 host 虚拟地址)
+    pub fn translate_guest_virtaddr(&self, guest_vaddr: usize) -> usize {
+        if let Some(shadow_pg) = &self.root_page_table {
+            let guest_vppn: VirtPageNum = guest_vaddr.into();
+            let guest_ppn = shadow_pg.translate(guest_vppn).unwrap().ppn();
+            let guest_paddr: usize = guest_ppn.into();
+            guest_paddr
+        }else{
+            guest_vaddr
+        }
+    }
 }
 
 use crate::trap::trap_return;

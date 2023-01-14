@@ -20,7 +20,7 @@ pub use frame_allocator::{frame_alloc, FrameTracker};
 pub use memory_set::{ remap_test, guest_kernel_test };
 pub use memory_set::{MapPermission, MemorySet, KERNEL_SPACE};
 pub use page_table::{translated_byte_buffer, PageTableEntry};
-use page_table::{PTEFlags, PageTable};
+pub use page_table::{PTEFlags, PageTable};
 
 
 // /// 将客户操作系统加载到对应的物理地址
