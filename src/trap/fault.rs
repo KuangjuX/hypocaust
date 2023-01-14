@@ -72,15 +72,23 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                 }
             }
             riscv_decode::Instruction::Csrrc(i) => {
+                let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
                 let val = get_shadow_csr(csr);
+                if mask != 0 {
+                    write_shadow_csr(csr, val & !mask);
+                }
                 ctx.x[rd] = val;
             }
             riscv_decode::Instruction::Csrrs(i) => {
+                let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
-                let rd= i.rd() as usize;
+                let rd = i.rd() as usize;
                 let val = get_shadow_csr(csr);
+                if mask != 0 {
+                    write_shadow_csr(csr, val | mask);
+                }
                 ctx.x[rd] = val;
             }
             // 写 CSR 指令
@@ -90,7 +98,36 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                 // 向 Shadow CSR 写入
                 let val = ctx.x[rs];
                 write_shadow_csr(csr, val);
+            },
+            riscv_decode::Instruction::Csrrwi(i) => {
+                let prev = get_shadow_csr(i.csr() as usize);
+                write_shadow_csr(i.csr() as usize, i.zimm() as usize);
+                ctx.x[i.rd() as usize] = prev;
             }
+            riscv_decode::Instruction::Csrrsi(i) => {
+                let prev = get_shadow_csr(i.csr() as usize);
+                let mask = i.zimm() as usize;
+                if mask != 0 {
+                    write_shadow_csr(i.csr() as usize, prev | mask);
+                }
+                ctx.x[i.rd() as usize] = prev;
+            },
+            riscv_decode::Instruction::Csrrci(i) => {
+                let prev = get_shadow_csr(i.csr() as usize);
+                let mask = i.zimm() as usize;
+                if mask != 0 {
+                    write_shadow_csr(i.csr() as usize, prev & !mask);
+                }
+                ctx.x[i.rd() as usize] = prev;
+            }
+            riscv_decode::Instruction::SfenceVma(i) => {
+                if i.rs1() == 0 {
+
+                }else{
+                    panic!("[hypervisor] Unimplented!");
+                }
+            }
+            riscv_decode::Instruction::Wfi => {}
             _ => { panic!("[hypervisor] Unrecognized instruction, spec: {:#x}", ctx.sepc)}
         }
     }else{ panic!("[hypervisor] Failed to parse instruction.") }
