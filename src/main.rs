@@ -74,7 +74,6 @@ fn clear_bss() {
 }
 
 #[no_mangle]
-/// the rust entry-point of os
 pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     clear_bss();
     println!("[hypervisor] Hello Hypocaust");
@@ -87,6 +86,7 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     trap::init();
     mm::remap_test();
     mm::guest_kernel_test();
+    // 开启时钟中断
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
     // 创建用户态的 guest kernel 内存空间

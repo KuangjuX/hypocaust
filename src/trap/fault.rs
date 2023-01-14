@@ -133,3 +133,13 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
     }else{ panic!("[hypervisor] Failed to parse instruction.") }
     ctx.sepc += len;
 }
+
+/// 向 guest kernel 转发异常
+pub fn forward_expection(_ctx: &mut TrapContext) {
+    
+}
+
+/// 向 guest kernel 转发中断
+pub fn forward_interrupt(_ctx: &mut TrapContext) {
+    
+}
