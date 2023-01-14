@@ -47,17 +47,4 @@ impl TrapContext {
     }
 }
 
-/// 需要保存的 guest kernel 会用到的寄存器
-pub struct SContext {
-    pub sstatus: u64,
-    pub sie: u64,
-    pub sip: u64,
-    pub stvec: u64,
-    pub sscratch: u64,
-    pub sepc: u64,
-    pub scause: u64,
-    pub stval: u64,
-    pub satp: u64,
 
-    pub mtimecmp: u64
-}

@@ -3,7 +3,7 @@
 use core::arch::asm;
 
 const SBI_SET_TIMER: usize = 0;
-const SBI_CONSOLE_PUTCHAR: usize = 1;
+pub const SBI_CONSOLE_PUTCHAR: usize = 1;
 
 const SBI_CONSOLE_GETCHAR: usize = 2;
 const SBI_CLEAR_IPI: usize = 3;

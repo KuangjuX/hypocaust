@@ -1,4 +1,4 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, PhysAddr},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
 use crate::constants::csr;
 
 

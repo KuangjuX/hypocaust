@@ -12,10 +12,10 @@
 //! was. For example, timer interrupts trigger task preemption, and syscalls go
 //! to [`syscall()`].
 mod context;
+mod fault;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::{current_user_token, write_shadow_csr, current_trap_cx};
-use crate::mm::PhysAddr;
+use crate::guest::{current_user_token, current_trap_cx};
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
 // };
@@ -58,81 +58,23 @@ pub fn enable_timer_interrupt() {
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
     let ctx = current_trap_cx();
+    // println!("[hypervisor] sepc: {:#x}", ctx.sepc);
     let scause = scause::read();
     let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            // cx.sepc += 4;
-            // cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
-            println!("[hypervisor] user env call");
-            panic!()
+            instruction_handler(ctx);
         }
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            println!("[hypervisor] PageFault in application, bad addr = {:#x}, bad instruction = {:#x}.", stval, ctx.sepc);
-            let epc = ctx.sepc;
-            let i1 = unsafe{ core::ptr::read(epc as *const u16) };
-            let len = riscv_decode::instruction_length(i1);
-            let inst = match len {
-                2 => i1 as u32,
-                4 => unsafe{ core::ptr::read(epc as *const u32) },
-                _ => unreachable!()
-            };
-            println!("[hypervisor] inst: {:#x}", inst);
-            if let Ok(inst) = riscv_decode::decode(inst) {
-                match inst {
-                    riscv_decode::Instruction::Sd(i) => {
-                        let rs1 = i.rs1();
-                        let rs2 = i.rs2();
-                        println!("[hypervisor] rs1: {}, rs2: {}", rs1, rs2);
-                    },
-                    _ => { panic!("[hypervisor] Unrecognized instruction") }
-                }
-            }else{
-                println!("[hypervisr] Fail to parse instruction");
-            }
-            panic!()
+            instruction_handler(ctx);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             // 读出发生异常的 guest kernel 物理地址(虚拟地址)
             // 目前没有影子页表，可以直接读取
-            let epc = sepc::read();
-            let i1 = unsafe{ core::ptr::read(epc as *const u16) };
-            let len = riscv_decode::instruction_length(i1);
-            let inst = match len {
-                2 => i1 as u32,
-                4 => unsafe{ core::ptr::read(epc as *const u32) },
-                _ => unreachable!()
-            };
-            if let Ok(inst) = riscv_decode::decode(inst) {
-                match inst {
-                    riscv_decode::Instruction::Csrrc(i) => {
-
-                    }
-                    riscv_decode::Instruction::Csrrs(i) => {
-                        
-                    }
-                    // 写 CSR 指令
-                    riscv_decode::Instruction::Csrrw(i) => {
-                        let csr = i.csr() as usize;
-                        let rs = i.rs1() as usize;
-                        println!("[hypervisor] csr: {}, rs: {}", csr, rs);
-                        // 向 Shadow CSR 写入
-                        let val = ctx.x[rs];
-                        println!("[hypervisor] x{}: {:#x}", rs, val);
-                        write_shadow_csr(csr, val);
-                        // 更新地址
-                        ctx.sepc += len;
-                    },
-                    _ => {
-                        panic!("[hypervisor] Unrecognized instruction!");
-                    }
-                }
-            }else{
-                panic!("[hypervisor] Fail to decode expection instruction");
-            }
+            instruction_handler(ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
@@ -140,9 +82,10 @@ pub fn trap_handler() -> ! {
         }
         _ => {
             panic!(
-                "Unsupported trap {:?}, stval = {:#x}!",
+                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
                 scause.cause(),
-                stval
+                stval,
+                ctx.sepc
             );
         }
     }
@@ -191,3 +134,5 @@ pub fn trap_from_kernel() -> ! {
 }
 
 pub use context::TrapContext;
+
+use self::fault::instruction_handler;
