@@ -1,4 +1,5 @@
 use crate::mm::{PageTable, VirtPageNum};
+use super::shadow_pgt::ShadowPageTable;
 
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -19,7 +20,10 @@ pub struct ShadowState {
     smode: bool,
 
     // 根目录页表
-    root_page_table: Option<PageTable>
+    root_page_table: Option<PageTable>,
+
+    /// 影子页表
+    shadow_pgt: ShadowPageTable
 }
 
 impl ShadowState {
@@ -36,7 +40,8 @@ impl ShadowState {
 
             smode: true,
 
-            root_page_table: None
+            root_page_table: None,
+            shadow_pgt: ShadowPageTable::new()
         }
     }
 
