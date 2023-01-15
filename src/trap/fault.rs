@@ -1,14 +1,17 @@
 use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr, translate_guest_paddr };
 
 pub fn instruction_handler(ctx: &mut TrapContext) {
-    let epc = translate_guest_vaddr(ctx.sepc);
-    let i1 = unsafe{ core::ptr::read(epc as *const u16) };
+    let gpepc = translate_guest_vaddr(ctx.sepc);
+    // println!("[hypervisor] gpepc: {:#x}", gpepc);
+    let vhepc = translate_guest_paddr(gpepc);
+    // println!("[hypervisor] vhepc: {:#x}", vhepc);
+    let i1 = unsafe{ core::ptr::read(vhepc as *const u16) };
     let len = riscv_decode::instruction_length(i1);
     let inst = match len {
         2 => i1 as u32,
-        4 => unsafe{ core::ptr::read(epc as *const u32) },
+        4 => unsafe{ core::ptr::read(vhepc as *const u32) },
         _ => unreachable!()
     };
     if let Ok(inst) = riscv_decode::decode(inst) {

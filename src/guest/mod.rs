@@ -1,4 +1,4 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, VirtPageNum, PhysAddr},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1}};
 use crate::constants::csr;
 
 
@@ -79,11 +79,24 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
     trap_context_ppn.get_mut() 
 }
 
+/// GVA -> GPA
 pub fn translate_guest_vaddr(vaddr: usize) -> usize {
     let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let kernel = &inner.kernels[inner.run_id];
     let state = &kernel.shadow_state;
-    state.translate_guest_virtaddr(vaddr)
+    state.translate_guest_vaddr(vaddr)
+}
+
+/// GPA -> HVA
+pub fn translate_guest_paddr(paddr: usize) -> usize {
+    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let kernel = &inner.kernels[inner.run_id];
+    let offset = paddr & 0xfff;
+    let vpn: VirtPageNum = VirtAddr(paddr).floor();
+    let ppn = kernel.memory.translate(vpn).unwrap().ppn();
+    let vaddr: PhysAddr = ppn.into();
+    let vaddr: usize = vaddr.into();
+    vaddr + offset
 }
 
 pub fn get_shadow_csr(csr: usize) -> usize {
@@ -122,6 +135,7 @@ pub fn write_shadow_csr(csr: usize, val: usize) {
 
 /// Guest Kernel 结构体
 pub struct GuestKernel {
+    /// guest kernel 内存映射，从 GPA -> HVA 转换
     pub memory: MemorySet,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,

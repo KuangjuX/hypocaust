@@ -68,7 +68,7 @@ impl ShadowState {
     pub fn paged(&self) -> bool { self.satp != 0 }
 
     /// 将 guest 虚拟地址翻译成 guest 物理地址(即 host 虚拟地址)
-    pub fn translate_guest_virtaddr(&self, guest_vaddr: usize) -> usize {
+    pub fn translate_guest_vaddr(&self, guest_vaddr: usize) -> usize {
         if let Some(shadow_pg) = &self.root_page_table {
             let guest_vppn: VirtPageNum = guest_vaddr.into();
             let guest_ppn = shadow_pg.translate(guest_vppn).unwrap().ppn();

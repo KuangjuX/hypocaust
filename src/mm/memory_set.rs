@@ -216,6 +216,8 @@ impl MemorySet {
         let magic = elf_header.pt1.magic;
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
         let ph_count = elf_header.pt2.ph_count();
+        // 物理内存,从 0x8800_0000 开始
+        // 虚拟内存,从 0x8000_0000 开始
         let mut paddr = GUEST_KERNEL_PHY_START_1 as *mut u8;
         let mut last_paddr = GUEST_KERNEL_PHY_START_1 as *mut u8;
         for i in 0..ph_count {
@@ -237,12 +239,6 @@ impl MemorySet {
                 // 将内存拷贝到对应的物理内存上
                 unsafe{
                     core::ptr::copy(guest_kernel_data.as_ptr().add(ph.offset() as usize), paddr, ph.file_size() as usize);
-                    // println!(
-                    //     "[hypervisor] Copying {:#x} into {:#x}, len: {:#x}",
-                    //     guest_kernel_data.as_ptr().add(ph.offset() as usize) as usize,
-                    //     paddr as usize,
-                    //     ph.file_size() as usize
-                    // );
                     let page_align_size = ((ph.mem_size() as usize + PAGE_SIZE - 1) >> 12) << 12;
                     paddr = paddr.add(page_align_size);
                 }
@@ -266,7 +262,21 @@ impl MemorySet {
     /// 加载客户操作系统
     pub fn hyper_load_guest_kernel(&mut self, guest_kernel_memory: &MemorySet) {
         for area in guest_kernel_memory.areas.iter() {
-            self.push(area.clone(), None)
+            // 修改虚拟地址与物理地址相同
+            let ppn_range = area.ppn_range.unwrap();
+            let start_pa: PhysAddr = ppn_range.get_start().into();
+            let end_pa: PhysAddr = ppn_range.get_end().into();
+            let start_va: usize = start_pa.into();
+            let end_va: usize= end_pa.into();
+            let new_area = MapArea::new(
+                start_va.into(), 
+                end_va.into(), 
+                Some(start_pa),
+                Some(end_pa), 
+                area.map_type, 
+                area.map_perm
+            );
+            self.push(new_area, None);
         }
     }
 
@@ -289,11 +299,11 @@ impl MemorySet {
 /// map area structure, controls a contiguous piece of virtual memory
 #[derive(Clone)]
 pub struct MapArea {
-    vpn_range: VPNRange,
-    ppn_range: Option<PPNRange>,
-    data_frames: BTreeMap<VirtPageNum, FrameTracker>,
-    map_type: MapType,
-    map_perm: MapPermission,
+    pub vpn_range: VPNRange,
+    pub ppn_range: Option<PPNRange>,
+    pub data_frames: BTreeMap<VirtPageNum, FrameTracker>,
+    pub map_type: MapType,
+    pub map_perm: MapPermission,
 }
 
 impl MapArea {
@@ -359,8 +369,6 @@ impl MapArea {
             let ppn_end: usize = ppn_range.get_end().into();
             let vpn_start: usize = vpn_range.get_start().into();
             let vpn_end: usize = vpn_range.get_end().into();
-            // println!("[hypervisor] ppn_end: {:#x}, ppn_start: {:#x}, vpn_end: {:#x}, vpn_start: {:#x}",
-        // ppn_end, ppn_start, vpn_end, vpn_start);
             assert_eq!(ppn_end - ppn_start, vpn_end - vpn_start);
             let mut ppn = ppn_range.get_start();
             let mut vpn = vpn_range.get_start();
@@ -454,16 +462,16 @@ pub fn remap_test() {
 
 #[allow(unused)]
 pub fn guest_kernel_test() {
-    use crate::constants::layout::GUEST_KERNEL_VIRT_START_1;
+    use crate::constants::layout::GUEST_KERNEL_PHY_START_1;
     let mut kernel_space = KERNEL_SPACE.exclusive_access();
 
-    let guest_kernel_text: VirtAddr = GUEST_KERNEL_VIRT_START_1.into();
+    let guest_kernel_text: VirtAddr = GUEST_KERNEL_PHY_START_1.into();
 
     assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().executable());
     assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().readable());
     // 尝试读数据
     unsafe{
-        core::ptr::read(GUEST_KERNEL_VIRT_START_1 as *const u32);
+        core::ptr::read(GUEST_KERNEL_PHY_START_1 as *const u32);
     }
     // 测试 guest ketnel
     println!("[hypervisor] guest kernel test passed!");
