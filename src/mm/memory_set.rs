@@ -3,8 +3,8 @@
 use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-use super::{StepByOne, VPNRange};
-use crate::constants::layout::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, USER_STACK_SIZE, GUEST_KERNEL_PHY_START_1};
+use super::{StepByOne, VPNRange, PPNRange};
+use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, MEMORY_END, MMIO};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -58,7 +58,7 @@ impl MemorySet {
         permission: MapPermission,
     ) {
         self.push(
-            MapArea::new(start_va, end_va, MapType::Framed, permission),
+            MapArea::new(start_va, end_va,  None, None, MapType::Framed, permission),
             None,
         );
     }
@@ -99,13 +99,14 @@ impl MemorySet {
             ".initrd [{:#x}, {:#x})",
             sinitrd as usize, einitrd as usize
         );
-        
         println!("mapping .text section");
         memory_set.push(
             MapArea::new(
                 (stext as usize).into(),
                 (etext as usize).into(),
-                MapType::Identical,
+                Some((stext as usize).into()),
+                Some((etext as usize).into()),
+                MapType::Linear,
                 MapPermission::R | MapPermission::X,
             ),
             None,
@@ -115,7 +116,9 @@ impl MemorySet {
             MapArea::new(
                 (srodata as usize).into(),
                 (erodata as usize).into(),
-                MapType::Identical,
+                Some((srodata as usize).into()),
+                Some((erodata as usize).into()),
+                MapType::Linear,
                 MapPermission::R,
             ),
             None,
@@ -125,7 +128,9 @@ impl MemorySet {
             MapArea::new(
                 (sdata as usize).into(),
                 (edata as usize).into(),
-                MapType::Identical,
+                Some((sdata as usize).into()),
+                Some((edata as usize).into()),
+                MapType::Linear,
                 MapPermission::R | MapPermission::W,
             ),
             None,
@@ -135,7 +140,9 @@ impl MemorySet {
             MapArea::new(
                 (sbss_with_stack as usize).into(),
                 (ebss as usize).into(),
-                MapType::Identical,
+                Some((sbss_with_stack as usize).into()),
+                Some((ebss as usize).into()),
+                MapType::Linear,
                 MapPermission::R | MapPermission::W,
             ),
             None,
@@ -145,7 +152,9 @@ impl MemorySet {
             MapArea::new(
                 (ekernel as usize).into(),
                 MEMORY_END.into(),
-                MapType::Identical,
+                Some((ekernel as usize).into()),
+                Some(MEMORY_END.into()),
+                MapType::Linear,
                 MapPermission::R | MapPermission::W,
             ),
             None,
@@ -156,22 +165,14 @@ impl MemorySet {
                 MapArea::new(
                     (*pair).0.into(),
                     ((*pair).0 + (*pair).1).into(),
-                    MapType::Identical,
+                    Some((*pair).0.into()),
+                    Some(((*pair).0 + (*pair).1).into()),
+                    MapType::Linear,
                     MapPermission::R | MapPermission::W,
                 ),
                 None,
             );
         }
-
-        memory_set.push(
-            MapArea::new(
-                Into::<VirtAddr>::into(0x9000_0000),
-                Into::<VirtAddr>::into(0x9000_1000),
-                MapType::Identical,
-                MapPermission::R | MapPermission::X
-            ),
-            None,
-        );
 
         memory_set
     }
@@ -187,7 +188,7 @@ impl MemorySet {
             // 添加用户标志
             user_area.map_perm |= MapPermission::U;
             // 均设置为不可写，以便陷入虚拟机
-            user_area.map_perm &= !MapPermission::W;
+            // user_area.map_perm &= !MapPermission::W;
             memory_set.push(user_area, None);
         }
         // 创建跳板页映射
@@ -198,6 +199,8 @@ impl MemorySet {
             MapArea::new(
                 TRAP_CONTEXT.into(),
                 TRAMPOLINE.into(),
+                None,
+                None,
                 MapType::Framed,
                 MapPermission::R | MapPermission::W
             ),
@@ -213,7 +216,8 @@ impl MemorySet {
         let magic = elf_header.pt1.magic;
         assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
         let ph_count = elf_header.pt2.ph_count();
-        let mut phy_addr = GUEST_KERNEL_PHY_START_1 as *mut u8;
+        let mut paddr = GUEST_KERNEL_PHY_START_1 as *mut u8;
+        let mut last_paddr = GUEST_KERNEL_PHY_START_1 as *mut u8;
         for i in 0..ph_count {
             let ph = elf.program_header(i).unwrap();
             if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
@@ -232,20 +236,27 @@ impl MemorySet {
                 }
                 // 将内存拷贝到对应的物理内存上
                 unsafe{
-                    core::ptr::copy(guest_kernel_data.as_ptr().add(ph.offset() as usize), phy_addr, ph.file_size() as usize);
-                    println!(
-                        "[hypervisor] Copying {:#x} into {:#x}, len: {:#x}",
-                        guest_kernel_data.as_ptr().add(ph.offset() as usize) as usize,
-                        phy_addr as usize,
-                        ph.file_size() as usize
-                    );
-                    let page_align_size = ((ph.file_size() as usize + PAGE_SIZE - 1) >> 12) << 12;
-                    println!("[hypervisor] page align size: {:#x}", page_align_size);
-                    phy_addr = phy_addr.add(page_align_size);
+                    core::ptr::copy(guest_kernel_data.as_ptr().add(ph.offset() as usize), paddr, ph.file_size() as usize);
+                    // println!(
+                    //     "[hypervisor] Copying {:#x} into {:#x}, len: {:#x}",
+                    //     guest_kernel_data.as_ptr().add(ph.offset() as usize) as usize,
+                    //     paddr as usize,
+                    //     ph.file_size() as usize
+                    // );
+                    let page_align_size = ((ph.mem_size() as usize + PAGE_SIZE - 1) >> 12) << 12;
+                    paddr = paddr.add(page_align_size);
                 }
                 
-                let map_area = MapArea::new(start_va, end_va, MapType::Identical, map_perm);
-                println!("[hypervisor] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
+                let map_area = MapArea::new(
+                    start_va, 
+                    end_va, 
+                    Some(PhysAddr(last_paddr as usize)),
+                    Some(PhysAddr(paddr as usize)),
+                    MapType::Linear, 
+                    map_perm
+                );
+                last_paddr = paddr;
+                // println!("[hypervisor] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
                 memory_set.push(map_area, None);
             }
         }
@@ -259,74 +270,7 @@ impl MemorySet {
         }
     }
 
-    /// Include sections in elf and trampoline and TrapContext and user stack,
-    /// also returns user_sp and entry point.
-    pub fn from_elf(elf_data: &[u8]) -> (Self, usize, usize) {
-        let mut memory_set = Self::new_bare();
-        // map trampoline
-        memory_set.map_trampoline();
-        // map program headers of elf, with U flag
-        let elf = xmas_elf::ElfFile::new(elf_data).unwrap();
-        let elf_header = elf.header;
-        let magic = elf_header.pt1.magic;
-        assert_eq!(magic, [0x7f, 0x45, 0x4c, 0x46], "invalid elf!");
-        let ph_count = elf_header.pt2.ph_count();
-        let mut max_end_vpn = VirtPageNum(0);
-        for i in 0..ph_count {
-            let ph = elf.program_header(i).unwrap();
-            if ph.get_type().unwrap() == xmas_elf::program::Type::Load {
-                let start_va: VirtAddr = (ph.virtual_addr() as usize).into();
-                let end_va: VirtAddr = ((ph.virtual_addr() + ph.mem_size()) as usize).into();
-                let mut map_perm = MapPermission::U;
-                let ph_flags = ph.flags();
-                if ph_flags.is_read() {
-                    map_perm |= MapPermission::R;
-                }
-                if ph_flags.is_write() {
-                    map_perm |= MapPermission::W;
-                }
-                if ph_flags.is_execute() {
-                    map_perm |= MapPermission::X;
-                }
-                let map_area = MapArea::new(start_va, end_va, MapType::Framed, map_perm);
-                max_end_vpn = map_area.vpn_range.get_end();
-                memory_set.push(
-                    map_area,
-                    Some(&elf.input[ph.offset() as usize..(ph.offset() + ph.file_size()) as usize]),
-                );
-            }
-        }
-        // map user stack with U flags
-        let max_end_va: VirtAddr = max_end_vpn.into();
-        let mut user_stack_bottom: usize = max_end_va.into();
-        // guard page
-        user_stack_bottom += PAGE_SIZE;
-        let user_stack_top = user_stack_bottom + USER_STACK_SIZE;
-        memory_set.push(
-            MapArea::new(
-                user_stack_bottom.into(),
-                user_stack_top.into(),
-                MapType::Framed,
-                MapPermission::R | MapPermission::W | MapPermission::U,
-            ),
-            None,
-        );
-        // map TrapContext
-        memory_set.push(
-            MapArea::new(
-                TRAP_CONTEXT.into(),
-                TRAMPOLINE.into(),
-                MapType::Framed,
-                MapPermission::R | MapPermission::W,
-            ),
-            None,
-        );
-        (
-            memory_set,
-            user_stack_top,
-            elf.header.pt2.entry_point() as usize,
-        )
-    }
+
     /// 激活根页表
     pub fn activate(&self) {
         let satp = self.page_table.token();
@@ -346,6 +290,7 @@ impl MemorySet {
 #[derive(Clone)]
 pub struct MapArea {
     vpn_range: VPNRange,
+    ppn_range: Option<PPNRange>,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,
@@ -355,26 +300,39 @@ impl MapArea {
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
+        start_pa: Option<PhysAddr>,
+        end_pa: Option<PhysAddr>,
         map_type: MapType,
         map_perm: MapPermission,
     ) -> Self {
         let start_vpn: VirtPageNum = start_va.floor();
         let end_vpn: VirtPageNum = end_va.ceil();
-        Self {
+        if let (Some(start_pa), Some(end_pa)) = (start_pa, end_pa) {
+            let start_ppn = start_pa.floor();
+            let end_ppn = end_pa.ceil();
+            return Self {
+                vpn_range: VPNRange::new(start_vpn, end_vpn),
+                ppn_range: Some(PPNRange::new(start_ppn, end_ppn)),
+                data_frames: BTreeMap::new(),
+                map_type,
+                map_perm,
+            }
+        }
+        Self{
             vpn_range: VPNRange::new(start_vpn, end_vpn),
+            ppn_range: None,
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
         }
     }
-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum, ppn_: Option<PhysPageNum>) {
         let ppn: PhysPageNum;
         match self.map_type {
             // 线性映射
-            MapType::Identical => {
-                ppn = PhysPageNum(vpn.0);
-            }
-            // 分配内存映射
+            MapType::Linear => {
+                ppn = ppn_.unwrap();
+            },
             MapType::Framed => {
                 let frame = frame_alloc().unwrap();
                 ppn = frame.ppn;
@@ -392,8 +350,32 @@ impl MapArea {
         page_table.unmap(vpn);
     }
     pub fn map(&mut self, page_table: &mut PageTable) {
-        for vpn in self.vpn_range {
-            self.map_one(page_table, vpn);
+        // for (ppn, vpn )in (self.ppn_range, self.vpn_range) {
+        //     self.map_one(page_table, vpn);
+        // }
+        let vpn_range = self.vpn_range;
+        if let Some(ppn_range) = self.ppn_range {
+            let ppn_start: usize = ppn_range.get_start().into();
+            let ppn_end: usize = ppn_range.get_end().into();
+            let vpn_start: usize = vpn_range.get_start().into();
+            let vpn_end: usize = vpn_range.get_end().into();
+            // println!("[hypervisor] ppn_end: {:#x}, ppn_start: {:#x}, vpn_end: {:#x}, vpn_start: {:#x}",
+        // ppn_end, ppn_start, vpn_end, vpn_start);
+            assert_eq!(ppn_end - ppn_start, vpn_end - vpn_start);
+            let mut ppn = ppn_range.get_start();
+            let mut vpn = vpn_range.get_start();
+            loop {
+                self.map_one(page_table, vpn, Some(ppn));
+                ppn.step();
+                vpn.step();
+                if ppn == ppn_range.get_end() && vpn == vpn_range.get_end() {
+                    break;
+                }
+            }
+        }else{
+            for vpn in self.vpn_range {
+                self.map_one(page_table, vpn, None)
+            }
         }
     }
     #[allow(unused)]
@@ -430,8 +412,8 @@ impl MapArea {
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed
 pub enum MapType {
-    Identical,
     Framed,
+    Linear
 }
 
 bitflags! {

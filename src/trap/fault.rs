@@ -130,7 +130,7 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
             riscv_decode::Instruction::Wfi => {}
             _ => { panic!("[hypervisor] Unrecognized instruction, spec: {:#x}", ctx.sepc)}
         }
-    }else{ panic!("[hypervisor] Failed to parse instruction.") }
+    }else{ panic!("[hypervisor] Failed to parse instruction, sepc: {:#x}", ctx.sepc) }
     ctx.sepc += len;
 }
 

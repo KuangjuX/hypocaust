@@ -4,6 +4,7 @@ use crate::constants::csr;
 
 mod switch;
 mod context;
+mod shadow_pgt;
 
 use context::TaskContext;
 use alloc::vec::Vec;

@@ -185,6 +185,12 @@ impl StepByOne for VirtPageNum {
     }
 }
 
+impl StepByOne for PhysPageNum {
+    fn step(&mut self) {
+        self.0 += 1;
+    }
+}
+
 #[derive(Copy, Clone)]
 /// a simple range structure for type T
 pub struct SimpleRange<T>
@@ -253,3 +259,4 @@ where
 
 /// a simple range structure for virtual page number
 pub type VPNRange = SimpleRange<VirtPageNum>;
+pub type PPNRange = SimpleRange<PhysPageNum>;

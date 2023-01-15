@@ -123,13 +123,13 @@ pub fn trap_return() -> ! {
 /// Todo: Chapter 9: I/O device
 pub fn trap_from_kernel() -> ! {
     let scause= scause::read();
+    let sepc = sepc::read();
     match scause.cause() {
         Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) | Trap::Exception(Exception::LoadPageFault)=> {
             let stval = stval::read();
-            let sepc = sepc::read();
             panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), sepc, stval);
         },
-        _ => { panic!("scause: {:?}", scause.cause())}
+        _ => { panic!("scause: {:?}, spec: {:#x}", scause.cause(), sepc)}
     }
 }
 
