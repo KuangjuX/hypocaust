@@ -1,4 +1,4 @@
-use crate::mm::{PageTable, VirtPageNum};
+use crate::mm::{PageTable, VirtPageNum, VirtAddr};
 use super::shadow_pgt::ShadowPageTable;
 
 pub struct ShadowState {
@@ -63,6 +63,7 @@ impl ShadowState {
     pub fn write_stval(&mut self, val: usize) { self.stval  = val }
     pub fn write_satp(&mut self, val: usize) { 
         // 构造 shadow page table
+        println!("satp: {:#x}", val);
         self.satp = val; 
         let shadow_page_table = PageTable::from_token(self.satp);
         self.root_page_table = Some(shadow_page_table);
@@ -75,10 +76,13 @@ impl ShadowState {
     /// 将 guest 虚拟地址翻译成 guest 物理地址(即 host 虚拟地址)
     pub fn translate_guest_vaddr(&self, guest_vaddr: usize) -> usize {
         if let Some(shadow_pg) = &self.root_page_table {
-            let guest_vppn: VirtPageNum = guest_vaddr.into();
-            let guest_ppn = shadow_pg.translate(guest_vppn).unwrap().ppn();
+            let offset = guest_vaddr & 0xfff;
+            let guest_vaddr = VirtAddr(guest_vaddr);
+            let guest_vpn: VirtPageNum = guest_vaddr.floor();
+            hdebug!("guest_vpn: {:?}, guest_vaddr: {:?}", guest_vpn, guest_vaddr);
+            let guest_ppn = shadow_pg.translate(guest_vpn).unwrap().ppn();
             let guest_paddr: usize = guest_ppn.into();
-            guest_paddr
+            guest_paddr + offset
         }else{
             guest_vaddr
         }

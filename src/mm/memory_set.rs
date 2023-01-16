@@ -4,7 +4,11 @@ use super::{frame_alloc, FrameTracker};
 use super::{PTEFlags, PageTable, PageTableEntry};
 use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange, PPNRange};
-use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, MEMORY_END, MMIO};
+use crate::constants::layout::{ 
+    PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, 
+    GUEST_KERNEL_VIRT_START_1, MEMORY_END, MMIO, 
+    GUEST_KERNEL_VIRT_END_1, GUEST_KERNEL_PHY_END_1
+};
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -243,6 +247,7 @@ impl MemorySet {
                     paddr = paddr.add(page_align_size);
                 }
                 
+                // println!("[hypervisor] start_va: {:#x}, end_va: {:#x}", Into::<usize>::into(start_va), Into::<usize>::into(end_va));
                 let map_area = MapArea::new(
                     start_va, 
                     end_va, 
@@ -252,10 +257,22 @@ impl MemorySet {
                     map_perm
                 );
                 last_paddr = paddr;
-                // println!("[hypervisor] guest: start_va: {:#x}, end_va: {:#x} permission: {:?}", Into::<usize>::into(start_va), Into::<usize>::into(end_va), map_perm);
                 memory_set.push(map_area, None);
             }
+            
         }
+        let offset = paddr as usize - GUEST_KERNEL_PHY_START_1;
+        // 映射其他物理内存
+        memory_set.push(MapArea::new(
+                VirtAddr(offset + GUEST_KERNEL_VIRT_START_1), 
+                VirtAddr(GUEST_KERNEL_VIRT_END_1), 
+                Some(PhysAddr(paddr as usize)), 
+                Some(PhysAddr(GUEST_KERNEL_PHY_END_1)), 
+                MapType::Linear, 
+                MapPermission::R | MapPermission::W
+            ),
+            None
+        );
         memory_set
     }
 
