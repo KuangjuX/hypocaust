@@ -37,6 +37,6 @@ macro_rules! println {
 #[macro_export]
 macro_rules! hdebug {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!(concat!("[hypervisor]", $fmt, "\n") $(, $($arg)+)?));
+        $crate::console::print(format_args!(concat!("[hypervisor] ", $fmt, "\n") $(, $($arg)+)?));
     }
 }

@@ -162,6 +162,12 @@ impl VirtPageNum {
 }
 
 impl PhysPageNum {
+    /// 暂时的实现
+    pub fn get_pte_array_by_offset(&self, offset: usize) -> &'static mut [PageTableEntry] {
+        let pa: PhysAddr = (*self).into();
+        // hdebug!("pa: {:#x}", pa.0 + offset);
+        unsafe { core::slice::from_raw_parts_mut((pa.0 + offset ) as *mut PageTableEntry, 512) }
+    }
     pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
         let pa: PhysAddr = (*self).into();
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut PageTableEntry, 512) }

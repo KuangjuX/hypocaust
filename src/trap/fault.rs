@@ -1,6 +1,6 @@
 use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr, translate_guest_paddr };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr, translate_guest_paddr, satp_handler };
 
 pub fn instruction_handler(ctx: &mut TrapContext) {
     let gpepc = translate_guest_vaddr(ctx.sepc);
@@ -100,7 +100,10 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                 let rs = i.rs1() as usize;
                 // 向 Shadow CSR 写入
                 let val = ctx.x[rs];
-                write_shadow_csr(csr, val);
+                match csr {
+                    crate::constants::csr::satp => { satp_handler(val) },
+                    _ => { write_shadow_csr(csr, val); }
+                }
             },
             riscv_decode::Instruction::Csrrwi(i) => {
                 let prev = get_shadow_csr(i.csr() as usize);

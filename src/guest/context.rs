@@ -1,5 +1,4 @@
-use crate::mm::{PageTable, VirtPageNum, VirtAddr};
-use super::shadow_pgt::ShadowPageTable;
+use crate::{mm::{PageTable, VirtPageNum, VirtAddr}, guest::translate_guest_paddr};
 
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -23,7 +22,7 @@ pub struct ShadowState {
     root_page_table: Option<PageTable>,
 
     /// 影子页表
-    shadow_pgt: ShadowPageTable
+    pub shadow_pgt: Option<PageTable>
 }
 
 impl ShadowState {
@@ -41,7 +40,7 @@ impl ShadowState {
             smode: true,
 
             root_page_table: None,
-            shadow_pgt: ShadowPageTable::new()
+            shadow_pgt: None
         }
     }
 
@@ -61,13 +60,7 @@ impl ShadowState {
     pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
     pub fn write_scause(&mut self, val: usize)  { self.scause = val }
     pub fn write_stval(&mut self, val: usize) { self.stval  = val }
-    pub fn write_satp(&mut self, val: usize) { 
-        // 构造 shadow page table
-        println!("satp: {:#x}", val);
-        self.satp = val; 
-        let shadow_page_table = PageTable::from_token(self.satp);
-        self.root_page_table = Some(shadow_page_table);
-    }
+    pub fn write_satp(&mut self, val: usize) { self.satp = val }
 
     pub fn smode(&self) -> bool { self.smode } 
     // 是否开启分页

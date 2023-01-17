@@ -81,6 +81,14 @@ impl PageTable {
             frames: Vec::new(),
         }
     }
+
+    pub fn from_ppn(ppn: PhysPageNum) -> Self {
+        Self {
+            root_ppn: ppn,
+            frames: Vec::new()
+        }
+    }
+
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
@@ -100,6 +108,7 @@ impl PageTable {
         }
         result
     }
+
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
@@ -117,6 +126,27 @@ impl PageTable {
         }
         result
     }
+
+    fn find_guest_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
+        let idxs = vpn.indexes();
+        let mut ppn = self.root_ppn;
+        let mut result: Option<&mut PageTableEntry> = None;
+        for (i, idx) in idxs.iter().enumerate() {
+            let pte;
+            if i == 0{ pte = &mut ppn.get_pte_array_by_offset(0)[*idx]; }
+            else{ pte = &mut ppn.get_pte_array_by_offset(0x800_0000)[*idx]; }
+            if i == 2 {
+                result = Some(pte);
+                break;
+            }
+            if !pte.is_valid() {
+                return None;
+            }
+            ppn = pte.ppn();
+        }
+        result
+    }
+
     #[allow(unused)]
     pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
@@ -129,9 +159,15 @@ impl PageTable {
         assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
         *pte = PageTableEntry::empty();
     }
+
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
     }
+
+    pub fn translate_guest(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+        self.find_guest_pte(vpn).map(|pte| *pte)
+    }
+
     pub fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
     }
