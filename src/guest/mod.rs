@@ -138,13 +138,12 @@ pub fn satp_handler(satp: usize) {
     let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
     let root_hva = guest.translate_guest_paddr(root_gpa);
     let root_hppn =  KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(root_hva >> 12)).unwrap().ppn();
-    hdebug!("root_gpa: {:#x}, root_hva: {:#x}, root_hppn: {:?}", root_gpa, root_hva, root_hppn);
-    hdebug!("Build shadow page table......");
+    // hdebug!("root_gpa: {:#x}, root_hva: {:#x}, root_hppn: {:?}", root_gpa, root_hva, root_hppn);
     let guest_page_table = PageTable::from_ppn(root_hppn);
     // 翻译的时候不能直接翻译，而要加一个偏移量，即将 guest virtual address -> host virtual address
     // 最终翻译的结果为 GPA (Guest Physical Address)
-    let ppn = guest_page_table.translate_guest(0x80329.into(), &guest.memory.page_table()).unwrap().ppn();
-    hdebug!("ppn: {:?}", ppn);
+    // let ppn = guest_page_table.translate_guest(0x80329.into(), &guest.memory.page_table()).unwrap().ppn();
+    // hdebug!("ppn: {:?}", ppn);
     // 构建影子页表
     let mut shadow_pgt = PageTable::new();
     // 将根目录页表中的所有映射转成影子页表
@@ -157,7 +156,8 @@ pub fn satp_handler(satp: usize) {
             if gppn.is_valid() {
                 let gpa = gppn.ppn().0 << 12;
                 let hva = guest.translate_guest_paddr(gpa);
-                let hvpn = PhysPageNum::from(hva >> 12);
+                let hvpn = VirtPageNum::from(hva >> 12);
+                let hppn = KERNEL_SPACE.exclusive_access().translate(hvpn).unwrap().ppn();
                 let mut pte_flags = PTEFlags::U;
                 if gppn.readable() {
                     pte_flags |= PTEFlags::R;
@@ -169,29 +169,32 @@ pub fn satp_handler(satp: usize) {
                     pte_flags |= PTEFlags::X;
                 }
                 // hdebug!("gvpn: {:?}, gppn: {:?}, hvpn: {:?}", gvpn, gppn.ppn(), hvpn);
-                shadow_pgt.map(gvpn, hvpn, pte_flags)
+                shadow_pgt.map(gvpn, hppn, pte_flags)
             }
         }
     }
     // 映射跳板页
     let trampoline_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAMPOLINE >> 12), &guest.memory.page_table()).unwrap().ppn();
-    let trampoline_hvpn = PhysPageNum::from(guest.translate_guest_paddr(trampoline_gppn.0 << 12) >> 12);
-    shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hvpn, PTEFlags::R | PTEFlags::U);
+    // let trampoline_hvpn = VirtPageNum::from(guest.translate_guest_paddr(trampoline_gppn.0 << 12) >> 12);
+    let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+    hdebug!("trampoline gppn: {:?}, trampoline hppn: {:?}", trampoline_gppn, trampoline_hppn);
+    shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
 
-    // 映射 TRAP CONTEXT
-    let trapctx_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAP_CONTEXT >> 12), &guest.memory.page_table()).unwrap().ppn();
-    hdebug!("trapctx_gppn: {:?}", trapctx_gppn);
-    let trapctx_hvpn = PhysPageNum::from(guest.translate_guest_paddr(trapctx_gppn.0 << 12) >> 12);
-    shadow_pgt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hvpn, PTEFlags::R | PTEFlags::U);
-    hdebug!("trapctx_gppn: {:?}, trapctx_hvpn: {:?}", trapctx_gppn, trapctx_hvpn);
+    // 映射 TRAP CONTEXT(TRAP 实际上在 Guest OS 中并没有被映射，但是我们在切换跳板页的时候需要使用到)
+    // let trapctx_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAP_CONTEXT >> 12), &guest.memory.page_table()).unwrap().ppn();
+    // hdebug!("trapctx_gppn: {:?}", trapctx_gppn);
+    let trapctx_hvpn = VirtPageNum::from(guest.translate_guest_paddr(TRAP_CONTEXT) >> 12);
+    let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+    shadow_pgt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+    hdebug!("trap ctx hvpn: {:?}, trap ctx hppn: {:?}", trapctx_hvpn, trapctx_hppn);
 
     // 测试映射是否正确
     assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().readable(), true);
     assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().is_valid(), true);
     assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().readable(), true);
     assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().is_valid(), true);
-    assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().is_user(), true);
     assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().readable(), true);
+    assert_eq!(shadow_pgt.translate(VirtPageNum(TRAP_CONTEXT >> 12)).unwrap().writable(), true);
 
     // 修改影子页表
     guest.shadow_state.shadow_pgt = Some(shadow_pgt);

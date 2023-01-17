@@ -202,6 +202,8 @@ impl MemorySet {
         // 创建跳板页映射
         memory_set.map_trampoline();
 
+        let trampoline_ppn = memory_set.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+        hdebug!("trampoline ppn: {:?}", trampoline_ppn);
         // 映射 Trap Context
         memory_set.push(
             MapArea::new(
@@ -214,6 +216,8 @@ impl MemorySet {
             ),
             None,
         );
+        // let ppn = memory_set.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)).unwrap().ppn();
+        // hdebug!("trap ctx ppn: {:?}", ppn);
         memory_set
     }
 
