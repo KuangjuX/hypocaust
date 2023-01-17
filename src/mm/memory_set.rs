@@ -54,6 +54,10 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
+
+    pub fn page_table(&self) -> &PageTable {
+        &self.page_table
+    }
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,
@@ -377,9 +381,6 @@ impl MapArea {
         page_table.unmap(vpn);
     }
     pub fn map(&mut self, page_table: &mut PageTable) {
-        // for (ppn, vpn )in (self.ppn_range, self.vpn_range) {
-        //     self.map_one(page_table, vpn);
-        // }
         let vpn_range = self.vpn_range;
         if let Some(ppn_range) = self.ppn_range {
             let ppn_start: usize = ppn_range.get_start().into();

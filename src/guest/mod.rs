@@ -1,10 +1,11 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, VirtPageNum, PhysAddr, PageTable, PTEFlags},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, PAGE_SIZE}};
+use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, VirtPageNum, PhysAddr, PageTable, PTEFlags},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, PAGE_SIZE, TRAMPOLINE}};
 use crate::constants::csr;
 
 
 mod switch;
 mod context;
 mod shadow_pgt;
+mod guest_pgt;
 
 use context::TaskContext;
 use alloc::vec::Vec;
@@ -79,24 +80,12 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
     trap_context_ppn.get_mut() 
 }
 
-/// GVA -> GPA
-pub fn translate_guest_vaddr(vaddr: usize) -> usize {
-    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let kernel = &inner.kernels[inner.run_id];
-    let state = &kernel.shadow_state;
-    state.translate_guest_vaddr(vaddr)
-}
 
 /// GPA -> HVA
 pub fn translate_guest_paddr(paddr: usize) -> usize {
     let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let kernel = &inner.kernels[inner.run_id];
-    let offset = paddr & 0xfff;
-    let vpn: VirtPageNum = VirtAddr(paddr).floor();
-    let ppn = kernel.memory.translate(vpn).unwrap().ppn();
-    let vaddr: PhysAddr = ppn.into();
-    let vaddr: usize = vaddr.into();
-    vaddr + offset
+    kernel.translate_guest_paddr(paddr)
 }
 
 pub fn get_shadow_csr(csr: usize) -> usize {
@@ -140,15 +129,21 @@ pub fn write_shadow_csr(csr: usize, val: usize) {
 /// 4. Finally, VMM sets the real satp to point to the shadow page table
 pub fn satp_handler(satp: usize) {
     hdebug!("satp: {:#x}", satp);
+    // 获取 guest kernel 
+    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let guest = &mut inner.kernels[id];
+
+    // 根据 satp 获取 guest kernel 根页表的物理地址
     let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
-    let root_hva = translate_guest_paddr(root_gpa);
+    let root_hva = guest.translate_guest_paddr(root_gpa);
     let root_hppn =  KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(root_hva >> 12)).unwrap().ppn();
     hdebug!("root_gpa: {:#x}, root_hva: {:#x}, root_hppn: {:?}", root_gpa, root_hva, root_hppn);
     hdebug!("Build shadow page table......");
     let guest_page_table = PageTable::from_ppn(root_hppn);
     // 翻译的时候不能直接翻译，而要加一个偏移量，即将 guest virtual address -> host virtual address
     // 最终翻译的结果为 GPA (Guest Physical Address)
-    let ppn = guest_page_table.translate_guest(0x80329.into()).unwrap().ppn();
+    let ppn = guest_page_table.translate_guest(0x80329.into(), &guest.memory.page_table()).unwrap().ppn();
     hdebug!("ppn: {:?}", ppn);
     // 构建影子页表
     let mut shadow_pgt = PageTable::new();
@@ -156,14 +151,14 @@ pub fn satp_handler(satp: usize) {
     for gva in (GUEST_KERNEL_VIRT_START_1..GUEST_KERNEL_VIRT_END_1).step_by(PAGE_SIZE) {
         let gvpn = VirtPageNum::from(gva >> 12);
         // let gppn = guest.memory.translate(gvpn);
-        let gppn = guest_page_table.translate(gvpn);
+        let gppn = guest_page_table.translate_guest(gvpn, &guest.memory.page_table());
         // 如果 guest ppn 存在且有效
         if let Some(gppn) = gppn {
             if gppn.is_valid() {
                 let gpa = gppn.ppn().0 << 12;
-                let hva = translate_guest_paddr(gpa);
+                let hva = guest.translate_guest_paddr(gpa);
                 let hvpn = PhysPageNum::from(hva >> 12);
-                let mut pte_flags = PTEFlags::V | PTEFlags::U;
+                let mut pte_flags = PTEFlags::U;
                 if gppn.readable() {
                     pte_flags |= PTEFlags::R;
                 }
@@ -173,19 +168,32 @@ pub fn satp_handler(satp: usize) {
                 if gppn.executable() {
                     pte_flags |= PTEFlags::X;
                 }
+                // hdebug!("gvpn: {:?}, gppn: {:?}, hvpn: {:?}", gvpn, gppn.ppn(), hvpn);
                 shadow_pgt.map(gvpn, hvpn, pte_flags)
             }
         }
     }
-    // assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().readable(), true);
-    // assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().is_valid(), true);
-    // assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().writable(), false);
-    // assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().readable(), true);
-    // assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().is_valid(), true);
-    // assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().writable(), false);
-    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let guest = &mut inner.kernels[id];
+    // 映射跳板页
+    let trampoline_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAMPOLINE >> 12), &guest.memory.page_table()).unwrap().ppn();
+    let trampoline_hvpn = PhysPageNum::from(guest.translate_guest_paddr(trampoline_gppn.0 << 12) >> 12);
+    shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hvpn, PTEFlags::R | PTEFlags::U);
+
+    // 映射 TRAP CONTEXT
+    let trapctx_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAP_CONTEXT >> 12), &guest.memory.page_table()).unwrap().ppn();
+    hdebug!("trapctx_gppn: {:?}", trapctx_gppn);
+    let trapctx_hvpn = PhysPageNum::from(guest.translate_guest_paddr(trapctx_gppn.0 << 12) >> 12);
+    shadow_pgt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hvpn, PTEFlags::R | PTEFlags::U);
+    hdebug!("trapctx_gppn: {:?}, trapctx_hvpn: {:?}", trapctx_gppn, trapctx_hvpn);
+
+    // 测试映射是否正确
+    assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().readable(), true);
+    assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().is_valid(), true);
+    assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().readable(), true);
+    assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().is_valid(), true);
+    assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().is_user(), true);
+    assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().readable(), true);
+
+    // 修改影子页表
     guest.shadow_state.shadow_pgt = Some(shadow_pgt);
     hdebug!("Success to construct shadow page table......");
 }
@@ -237,6 +245,15 @@ impl GuestKernel {
             return shadow_pgt.token()
         }
         self.memory.token()
+    }
+
+    pub fn translate_guest_paddr(&self, paddr: usize) -> usize {
+        let offset = paddr & 0xfff;
+        let vpn: VirtPageNum = VirtAddr(paddr).floor();
+        let ppn = self.memory.translate(vpn).unwrap().ppn();
+        let vaddr: PhysAddr = ppn.into();
+        let vaddr: usize = vaddr.into();
+        vaddr + offset
     }
 
 }

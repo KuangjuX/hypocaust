@@ -1,9 +1,10 @@
 use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_vaddr, translate_guest_paddr, satp_handler };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_paddr, satp_handler };
 
 pub fn instruction_handler(ctx: &mut TrapContext) {
-    let gpepc = translate_guest_vaddr(ctx.sepc);
+    // let gpepc = translate_guest_vaddr(ctx.sepc);
+    let gpepc = ctx.sepc;
     // println!("[hypervisor] gpepc: {:#x}", gpepc);
     let vhepc = translate_guest_paddr(gpepc);
     // println!("[hypervisor] vhepc: {:#x}", vhepc);
@@ -26,54 +27,54 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
                     _ => { panic!("[hypervisor] Error env call")}
                 }
             }
-            riscv_decode::Instruction::Sd(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 {
-                    ((0b1111 << 12) | i.imm()) as i16 as isize
-                }else{ 
-                    i.imm() as isize
-                };
-                // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_vaddr = ctx.x[rs1] as isize + offset; 
-                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
-                // 将 x[rs2] 的值写入内存中
-                unsafe{
-                    core::ptr::write(guest_paddr as *mut usize, ctx.x[rs2]);
-                }
-            },
-            riscv_decode::Instruction::Sw(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 {
-                    ((0b1111 << 12) | i.imm()) as i16 as isize
-                }else{ 
-                    i.imm() as isize
-                };
-                // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_vaddr = ctx.x[rs1] as isize + offset; 
-                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
-                // 将 x[rs2] 的值写入内存中
-                unsafe{
-                    core::ptr::write(guest_paddr as *mut u32, (ctx.x[rs2] & 0xffff_ffff) as u32);
-                }
-            }
-            riscv_decode::Instruction::Sb(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 {
-                    ((0b1111 << 12) | i.imm()) as i16 as isize
-                }else{ 
-                    i.imm() as isize
-                };
-                // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
-                let guest_vaddr = ctx.x[rs1] as isize + offset; 
-                let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
-                // 将 x[rs2] 的值写入内存中
-                unsafe{
-                    core::ptr::write(guest_paddr as *mut u8, (ctx.x[rs2] & 0xff) as u8);
-                }
-            }
+            // riscv_decode::Instruction::Sd(i) => {
+            //     let rs1 = i.rs1() as usize;
+            //     let rs2 = i.rs2() as usize;
+            //     let offset: isize = if i.imm() > 2048 {
+            //         ((0b1111 << 12) | i.imm()) as i16 as isize
+            //     }else{ 
+            //         i.imm() as isize
+            //     };
+            //     // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
+            //     let guest_vaddr = ctx.x[rs1] as isize + offset; 
+            //     // let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
+            //     // 将 x[rs2] 的值写入内存中
+            //     unsafe{
+            //         core::ptr::write(guest_paddr as *mut usize, ctx.x[rs2]);
+            //     }
+            // },
+            // riscv_decode::Instruction::Sw(i) => {
+            //     let rs1 = i.rs1() as usize;
+            //     let rs2 = i.rs2() as usize;
+            //     let offset: isize = if i.imm() > 2048 {
+            //         ((0b1111 << 12) | i.imm()) as i16 as isize
+            //     }else{ 
+            //         i.imm() as isize
+            //     };
+            //     // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
+            //     let guest_vaddr = ctx.x[rs1] as isize + offset; 
+            //     let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
+            //     // 将 x[rs2] 的值写入内存中
+            //     unsafe{
+            //         core::ptr::write(guest_paddr as *mut u32, (ctx.x[rs2] & 0xffff_ffff) as u32);
+            //     }
+            // }
+            // riscv_decode::Instruction::Sb(i) => {
+            //     let rs1 = i.rs1() as usize;
+            //     let rs2 = i.rs2() as usize;
+            //     let offset: isize = if i.imm() > 2048 {
+            //         ((0b1111 << 12) | i.imm()) as i16 as isize
+            //     }else{ 
+            //         i.imm() as isize
+            //     };
+            //     // 将虚拟地址转换成物理地址，这里地址是相同的，当加入 guest 分页后需要进行影子页表映射
+            //     let guest_vaddr = ctx.x[rs1] as isize + offset; 
+            //     let guest_paddr = translate_guest_vaddr(guest_vaddr as usize);
+            //     // 将 x[rs2] 的值写入内存中
+            //     unsafe{
+            //         core::ptr::write(guest_paddr as *mut u8, (ctx.x[rs2] & 0xff) as u8);
+            //     }
+            // }
             riscv_decode::Instruction::Csrrc(i) => {
                 let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
