@@ -36,7 +36,7 @@ Guest Virtual Address -> Guest Physical Address(Host Virtual Address) -> Host Ph
 ## RoadMap
 - [x] Load guest kernel && Run guest kernel
 - [x] Trap and emulate of privileged instructions(CSR related and SFENCE>VMA)
-- [ ] Shadow page tables
+- [x] Shadow page tables
 - [ ] Update PTE accessed and dirty bits
 - [ ] Timers
 - [ ] Expose and/or emulate peripherals
