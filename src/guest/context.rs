@@ -22,7 +22,7 @@ pub struct ShadowState {
     root_page_table: Option<PageTable>,
 
     /// 影子页表
-    pub shadow_pgt: Option<PageTable>
+    pub shadow_pgt: ShadowPageTable
 }
 
 impl ShadowState {
@@ -40,7 +40,7 @@ impl ShadowState {
             smode: true,
 
             root_page_table: None,
-            shadow_pgt: None
+            shadow_pgt: ShadowPageTable::new()
         }
     }
 
@@ -83,6 +83,8 @@ impl ShadowState {
 }
 
 use crate::trap::trap_return;
+
+use super::shadow_pgt::ShadowPageTable;
 
 #[repr(C)]
 /// task context structure containing some registers

@@ -2,6 +2,11 @@ use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
 use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_paddr, satp_handler };
 
+pub fn pfault(ctx: &mut TrapContext) {
+    let sepc = ctx.sepc;
+    
+}
+
 pub fn instruction_handler(ctx: &mut TrapContext) {
     // let gpepc = translate_guest_vaddr(ctx.sepc);
     let gpepc = ctx.sepc;

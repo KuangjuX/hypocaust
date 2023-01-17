@@ -5,7 +5,6 @@ use crate::constants::csr;
 mod switch;
 mod context;
 mod shadow_pgt;
-mod guest_pgt;
 
 use context::TaskContext;
 use alloc::vec::Vec;
@@ -150,7 +149,7 @@ pub fn satp_handler(satp: usize) {
     for gva in (GUEST_KERNEL_VIRT_START_1..GUEST_KERNEL_VIRT_END_1).step_by(PAGE_SIZE) {
         let gvpn = VirtPageNum::from(gva >> 12);
         // let gppn = guest.memory.translate(gvpn);
-        let gppn = guest_page_table.translate_guest(gvpn, &guest.memory.page_table());
+        let gppn = guest_page_table.translate_gvpn(gvpn, &guest.memory.page_table());
         // 如果 guest ppn 存在且有效
         if let Some(gppn) = gppn {
             if gppn.is_valid() {
@@ -174,7 +173,7 @@ pub fn satp_handler(satp: usize) {
         }
     }
     // 映射跳板页
-    let trampoline_gppn = guest_page_table.translate_guest(VirtPageNum::from(TRAMPOLINE >> 12), &guest.memory.page_table()).unwrap().ppn();
+    let trampoline_gppn = guest_page_table.translate_gvpn(VirtPageNum::from(TRAMPOLINE >> 12), &guest.memory.page_table()).unwrap().ppn();
     // let trampoline_hvpn = VirtPageNum::from(guest.translate_guest_paddr(trampoline_gppn.0 << 12) >> 12);
     let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
     hdebug!("trampoline gppn: {:?}, trampoline hppn: {:?}", trampoline_gppn, trampoline_hppn);
@@ -197,7 +196,7 @@ pub fn satp_handler(satp: usize) {
     assert_eq!(shadow_pgt.translate(VirtPageNum(TRAP_CONTEXT >> 12)).unwrap().writable(), true);
 
     // 修改影子页表
-    guest.shadow_state.shadow_pgt = Some(shadow_pgt);
+    guest.shadow_state.shadow_pgt.replace_guest_pgt(shadow_pgt);
     hdebug!("Success to construct shadow page table......");
 }
 
@@ -244,7 +243,7 @@ impl GuestKernel {
     }
 
     pub fn get_user_token(&self) -> usize {
-        if let Some(shadow_pgt) = &self.shadow_state.shadow_pgt {
+        if let Some(shadow_pgt) = self.shadow_state.shadow_pgt.guest_shadow_pgt() {
             return shadow_pgt.token()
         }
         self.memory.token()

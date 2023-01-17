@@ -127,14 +127,14 @@ impl PageTable {
         result
     }
 
-    fn find_guest_pte(&self, vpn: VirtPageNum, guest_pgt: &PageTable) -> Option<&mut PageTableEntry> {
+    fn find_guest_pte(&self, vpn: VirtPageNum, pgt: &PageTable) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
             let pte;
-            if i == 0{ pte = &mut ppn.get_pte_array_by_offset(None)[*idx]; }
-            else{ pte = &mut ppn.get_pte_array_by_offset(Some(guest_pgt))[*idx]; }
+            if i == 0{ pte = &mut ppn.get_pte_array_by_pgt(None)[*idx]; }
+            else{ pte = &mut ppn.get_pte_array_by_pgt(Some(pgt))[*idx]; }
             if i == 2 {
                 result = Some(pte);
                 break;
@@ -164,7 +164,7 @@ impl PageTable {
         self.find_pte(vpn).map(|pte| *pte)
     }
 
-    pub fn translate_guest(&self, vpn: VirtPageNum, guest_pgt: &PageTable) -> Option<PageTableEntry> {
+    pub fn translate_gvpn(&self, vpn: VirtPageNum, guest_pgt: &PageTable) -> Option<PageTableEntry> {
         self.find_guest_pte(vpn, guest_pgt).map(|pte| *pte)
     }
 

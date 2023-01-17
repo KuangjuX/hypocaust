@@ -163,11 +163,11 @@ impl VirtPageNum {
 
 impl PhysPageNum {
     /// 暂时的实现
-    pub fn get_pte_array_by_offset(&self, guest_pgt: Option<&PageTable>) -> &'static mut [PageTableEntry] {
+    pub fn get_pte_array_by_pgt(&self, pgt: Option<&PageTable>) -> &'static mut [PageTableEntry] {
         let pa: PhysAddr = (*self).into();
         // hdebug!("pa: {:?}", pa);
-        if let Some(guest_pgt) = guest_pgt {
-            let ppn = guest_pgt.translate(VirtPageNum::from(pa.0 >> 12)).unwrap().ppn();
+        if let Some(pgt) = pgt {
+            let ppn = pgt.translate(VirtPageNum::from(pa.0 >> 12)).unwrap().ppn();
             let pa = ppn.0 << 12;
             unsafe { core::slice::from_raw_parts_mut((pa) as *mut PageTableEntry, 512) }
         }else{
