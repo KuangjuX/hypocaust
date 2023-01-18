@@ -28,8 +28,9 @@ pub fn forward_expection(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_sepc(ctx.sepc);
     state.write_stval(stval::read());
     let stvec = state.get_stvec();
+    ctx.sepc = stvec;
     // 将 trap 返回地址设置为 Guest OS 的中断向量地址
-    riscv::register::sepc::write(stvec);
+    // riscv::register::sepc::write(stvec);
 }
 
 /// 向 guest kernel 转发中断
