@@ -6,6 +6,9 @@ pub const MMIO: &[(usize, usize)] = &[
     (0x0010_0000, 0x00_2000), // VIRT_TEST/RTC  in virt machine
 ];
 
+pub const QEMU_VIRT_START: usize = 0x0010_0000;
+pub const QEMU_VIRT_SIZE: usize = 0x00_2000;
+
 //ref:: https://github.com/andre-richter/qemu-exit
 use core::arch::asm;
 

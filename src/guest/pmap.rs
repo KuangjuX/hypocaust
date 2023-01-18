@@ -1,5 +1,6 @@
-use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PhysAddr, VirtAddr};
+use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PhysAddr, VirtAddr, PhysPageNum};
 use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1 };
+use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;
 
 impl GuestKernel {
@@ -13,8 +14,15 @@ impl GuestKernel {
         vaddr + offset
     }
     /// 映射 IOMMU 
-    pub fn iommu_map(&self, shadow_pgt: &mut PageTable) {
-
+    pub fn iommu_map(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+        // 映射 QEMU Virt
+        for index in (0..QEMU_VIRT_SIZE).step_by(PAGE_SIZE) {
+            let gvpn = VirtPageNum::from((QEMU_VIRT_START + index) >> 12);
+            let gppn = guest_pgt.translate_gvpn(gvpn, self.memory.page_table()).unwrap().ppn();
+            let hvpn = self.memory.translate(VirtPageNum::from(gppn.0)).unwrap().ppn();
+            let hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(hvpn.0)).unwrap().ppn();
+            shadow_pgt.map(VirtPageNum::from(gvpn), hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
+        }
     }
 
     /// 根据 satp 构建影子页表
@@ -24,7 +32,7 @@ impl GuestKernel {
         let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
         let root_hva = self.translate_guest_paddr(root_gpa);
         let root_hppn =  KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(root_hva >> 12)).unwrap().ppn();
-        let guest_page_table = PageTable::from_ppn(root_hppn);
+        let guest_pgt = PageTable::from_ppn(root_hppn);
         // 翻译的时候不能直接翻译，而要加一个偏移量，即将 guest virtual address -> host virtual address
         // 最终翻译的结果为 GPA (Guest Physical Address)
         // 构建影子页表
@@ -33,7 +41,7 @@ impl GuestKernel {
         for gva in (GUEST_KERNEL_VIRT_START_1..GUEST_KERNEL_VIRT_END_1).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from(gva >> 12);
             // let gppn = guest.memory.translate(gvpn);
-            let gppn = guest_page_table.translate_gvpn(gvpn, &self.memory.page_table());
+            let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
             // 如果 guest ppn 存在且有效
             if let Some(gppn) = gppn {
                 if gppn.is_valid() {
@@ -55,8 +63,10 @@ impl GuestKernel {
                 }
             }
         }
+        // 映射 IOMMU 
+        self.iommu_map(&guest_pgt, &mut shadow_pgt);
         // 映射跳板页
-        let trampoline_gppn = guest_page_table.translate_gvpn(VirtPageNum::from(TRAMPOLINE >> 12), &self.memory.page_table()).unwrap().ppn();
+        let trampoline_gppn = guest_pgt.translate_gvpn(VirtPageNum::from(TRAMPOLINE >> 12), &self.memory.page_table()).unwrap().ppn();
         let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
         shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
         hdebug!("trampoline gppn: {:?}, trampoline hppn: {:?}", trampoline_gppn, trampoline_hppn);

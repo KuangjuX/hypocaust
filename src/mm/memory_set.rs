@@ -216,8 +216,20 @@ impl MemorySet {
             ),
             None,
         );
-        // let ppn = memory_set.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)).unwrap().ppn();
-        // hdebug!("trap ctx ppn: {:?}", ppn);
+        
+        for pair in MMIO {
+            memory_set.push(
+                MapArea::new(
+                    (*pair).0.into(),
+                    ((*pair).0 + (*pair).1).into(),
+                    Some((*pair).0.into()),
+                    Some(((*pair).0 + (*pair).1).into()),
+                    MapType::Linear,
+                    MapPermission::R | MapPermission::W | MapPermission::U,
+                ),
+                None,
+            );
+        }
         memory_set
     }
 
