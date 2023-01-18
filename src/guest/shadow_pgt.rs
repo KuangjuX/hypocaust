@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
-use crate::mm::{PageTable, VirtPageNum, PageTableEntry};
+use crate::mm::PageTable;
 struct UserShadowPageTable {
     process_id: usize,
     pgt: PageTable
 }
-/// 影子页表是从 GVA 到 HVA 的直接映射
+/// 影子页表是从 GVA 到 HPA 的直接映射
 pub struct ShadowPageTable {
     guest_shadow_pgt: Option<PageTable>,
     user_shadow_pgt: Option<Vec<PageTable>>
