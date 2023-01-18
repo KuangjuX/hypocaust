@@ -1,4 +1,6 @@
-use crate::{mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum, VirtPageNum, PhysAddr, PageTable, PTEFlags},  trap::{TrapContext, trap_handler}, constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, PAGE_SIZE, TRAMPOLINE}};
+use crate::mm::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum};
+use crate::trap::{TrapContext, trap_handler};
+use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1};
 use crate::constants::csr;
 
 
@@ -82,7 +84,7 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 
 
 /// GPA -> HVA
-pub fn translate_guest_paddr(paddr: usize) -> usize {
+pub fn translate_guest_paddr(paddr: usize) -> Option<usize> {
     let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let kernel = &inner.kernels[inner.run_id];
     kernel.translate_guest_paddr(paddr)
@@ -184,6 +186,8 @@ impl GuestKernel {
         }
         self.memory.token()
     }
+
+    
 
 }
 

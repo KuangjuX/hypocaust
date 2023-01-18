@@ -26,6 +26,8 @@ use riscv::register::{
     scause::{self, Exception, Interrupt, Trap},
     sie, stval, stvec, sepc
 };
+pub use context::TrapContext;
+use self::fault::{pfault, ifault};
 
 global_asm!(include_str!("trap.S"));
 
@@ -58,23 +60,20 @@ pub fn enable_timer_interrupt() {
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
     let ctx = current_trap_cx();
-    // println!("[hypervisor] sepc: {:#x}", ctx.sepc);
     let scause = scause::read();
     let stval = stval::read();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            instruction_handler(ctx);
+            ifault(ctx);
         }
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            instruction_handler(ctx);
+            pfault(ctx);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            // 读出发生异常的 guest kernel 物理地址(虚拟地址)
-            // 目前没有影子页表，可以直接读取
-            instruction_handler(ctx);
+            ifault(ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
@@ -133,6 +132,4 @@ pub fn trap_from_kernel() -> ! {
     }
 }
 
-pub use context::TrapContext;
 
-use self::fault::instruction_handler;

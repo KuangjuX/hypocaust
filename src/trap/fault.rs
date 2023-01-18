@@ -1,18 +1,49 @@
+use riscv::register::{stval, scause};
+
 use super::TrapContext;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, translate_guest_paddr, satp_handler };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel };
 
+/// 处理地址错误问题
 pub fn pfault(ctx: &mut TrapContext) {
-    let sepc = ctx.sepc;
+    // 获取地址错信息
+    let stval = stval::read();
+    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let guest = &mut inner.kernels[id];
+    if let Some(vhaddr) = guest.translate_valid_guest_vaddr(stval) {
+        // 处理地址错误
+        panic!("[hypervisor] vhaddr: {:#x}", vhaddr);
+    }else{
+        // 转发到 Guest OS 处理
+        forward_expection(guest, ctx)
+    }
+}
+
+/// 向 guest kernel 转发异常
+pub fn forward_expection(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+    hdebug!("forward expection");
+    let state = &mut guest.shadow_state;
+    state.write_scause(scause::read().code());
+    state.write_sepc(ctx.sepc);
+    state.write_stval(stval::read());
+    let stvec = state.get_stvec();
+    // 将 trap 返回地址设置为 Guest OS 的中断向量地址
+    riscv::register::sepc::write(stvec);
+}
+
+/// 向 guest kernel 转发中断
+pub fn maybe_forward_interrupt(_ctx: &mut TrapContext) {
     
 }
 
-pub fn instruction_handler(ctx: &mut TrapContext) {
-    // let gpepc = translate_guest_vaddr(ctx.sepc);
-    let gpepc = ctx.sepc;
-    // println!("[hypervisor] gpepc: {:#x}", gpepc);
-    let vhepc = translate_guest_paddr(gpepc);
-    // println!("[hypervisor] vhepc: {:#x}", vhepc);
+/// 处理特权级指令问题
+pub fn ifault(ctx: &mut TrapContext) {
+    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let guest = &inner.kernels[id];
+    let vhepc = guest.translate_guest_vaddr(ctx.sepc).unwrap();
+    drop(inner);
     let i1 = unsafe{ core::ptr::read(vhepc as *const u16) };
     let len = riscv_decode::instruction_length(i1);
     let inst = match len {
@@ -144,14 +175,4 @@ pub fn instruction_handler(ctx: &mut TrapContext) {
         }
     }else{ panic!("[hypervisor] Failed to parse instruction, sepc: {:#x}", ctx.sepc) }
     ctx.sepc += len;
-}
-
-/// 向 guest kernel 转发异常
-pub fn forward_expection(_ctx: &mut TrapContext) {
-    
-}
-
-/// 向 guest kernel 转发中断
-pub fn forward_interrupt(_ctx: &mut TrapContext) {
-    
 }

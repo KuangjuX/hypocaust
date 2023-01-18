@@ -28,7 +28,7 @@
 
 
 
-Guest Virtual Address -> Guest Physical Address(Host Virtual Address) -> Host Physical Address
+GVA -> GPA -> HVA -> HPA
 
 ## Supported Platforms
 - QEMU virt machine type
