@@ -37,7 +37,7 @@ GVA -> GPA -> HVA -> HPA
 - [x] Load guest kernel && Run guest kernel
 - [x] Trap and emulate of privileged instructions(CSR related and SFENCE>VMA)
 - [x] Shadow page tables
-- [ ] Foward Expections & Interrupts
+- [x] Foward Expections & Interrupts
 - [ ] Update PTE accessed and dirty bits
 - [ ] Timers
 - [ ] Expose and/or emulate peripherals
