@@ -3,7 +3,7 @@ use riscv::register::{stval, scause};
 use super::TrapContext;
 use crate::constants::layout::PAGE_SIZE;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel, translate_guest_vaddr };
 
 /// 处理地址错误问题
 pub fn pfault(ctx: &mut TrapContext) {
@@ -31,7 +31,6 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let stvec = state.get_stvec();
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     ctx.sepc = stvec;
-    hdebug!("shadow sepc: {:#x}", state.get_sepc());
 }
 
 /// 向 guest kernel 转发中断
@@ -47,7 +46,7 @@ pub fn ifault(ctx: &mut TrapContext) {
     let vhepc = guest.translate_guest_vaddr(ctx.sepc).unwrap();
     drop(inner);
     let i1 = unsafe{ core::ptr::read(vhepc as *const u16) };
-    let len = riscv_decode::instruction_length(i1);
+    let mut len = riscv_decode::instruction_length(i1);
     let inst = match len {
         2 => i1 as u32,
         4 => unsafe{ core::ptr::read(vhepc as *const u32) },
@@ -127,8 +126,6 @@ pub fn ifault(ctx: &mut TrapContext) {
             }
             riscv_decode::Instruction::Sret => {
                 ctx.sepc = get_shadow_csr(crate::constants::csr::sepc);
-                hdebug!("shaodw sepc: {:#x}", get_shadow_csr(crate::constants::csr::sepc));
-                // panic!("sret: VMM forward exception finished!");
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 if i.rs1() == 0 {

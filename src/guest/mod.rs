@@ -95,6 +95,12 @@ pub fn translate_guest_paddr(paddr: usize) -> Option<usize> {
     kernel.translate_guest_paddr(paddr)
 }
 
+pub fn translate_guest_vaddr(vaddr: usize) -> Option<usize> {
+    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let kernel = &inner.kernels[inner.run_id];
+    kernel.translate_guest_vaddr(vaddr)
+}
+
 pub fn get_shadow_csr(csr: usize) -> usize {
     let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let id = inner.run_id;
@@ -121,7 +127,7 @@ pub fn write_shadow_csr(csr: usize, val: usize) {
         csr::stvec => { shadow_state.write_stvec(val) }
         csr::sie => { shadow_state.write_sie(val) }
         csr::sscratch => { shadow_state.write_sscratch(val) }
-        csr::sepc => { shadow_state.write_sepc(val) }
+        csr::sepc => { shadow_state.write_sepc(val);}
         csr::scause => { shadow_state.write_scause(val) }
         csr::stval => { shadow_state.write_stval(val) }
         csr::satp => { shadow_state.write_satp(val) }

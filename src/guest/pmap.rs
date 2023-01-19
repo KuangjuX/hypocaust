@@ -15,6 +15,7 @@ impl GuestKernel {
         None
     }
 
+    /// GVA -> HPA
     pub fn translate_guest_vaddr(&self, vaddr: usize) -> Option<usize> {
         let offset = vaddr & 0xfff;
         let vpn = VirtPageNum::from(vaddr >> 12);
