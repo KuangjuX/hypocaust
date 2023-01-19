@@ -31,6 +31,7 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let stvec = state.get_stvec();
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     ctx.sepc = stvec;
+    hdebug!("shadow sepc: {:#x}", state.get_sepc());
 }
 
 /// 向 guest kernel 转发中断
@@ -125,7 +126,9 @@ pub fn ifault(ctx: &mut TrapContext) {
                 ctx.x[i.rd() as usize] = prev;
             }
             riscv_decode::Instruction::Sret => {
-                panic!("sret: VMM forward exception finished!");
+                ctx.sepc = get_shadow_csr(crate::constants::csr::sepc);
+                hdebug!("shaodw sepc: {:#x}", get_shadow_csr(crate::constants::csr::sepc));
+                // panic!("sret: VMM forward exception finished!");
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 if i.rs1() == 0 {
