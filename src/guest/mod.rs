@@ -64,6 +64,11 @@ pub fn run_guest_kernel() -> ! {
     panic!("unreachable in run_first_task!");
 }
 
+pub fn current_run_id() -> usize {
+    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
+    id
+}
+
 pub fn current_user_token() -> usize {
     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
@@ -144,7 +149,8 @@ pub struct GuestKernel {
     pub memory: MemorySet,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
-    pub shadow_state: ShadowState
+    pub shadow_state: ShadowState,
+    pub index: usize
 }
 
 impl GuestKernel {
@@ -166,7 +172,8 @@ impl GuestKernel {
             memory,
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
-            shadow_state: ShadowState::new()
+            shadow_state: ShadowState::new(),
+            index
         };
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();

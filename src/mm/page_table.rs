@@ -57,6 +57,10 @@ impl PageTableEntry {
     pub fn is_user(&self) -> bool {
         (self.flags() & PTEFlags::U) != PTEFlags::empty()
     }
+
+    pub fn is_global(&self) -> bool {
+        (self.flags() & PTEFlags::G) != PTEFlags::empty()
+    }
 }
 
 /// page table structure

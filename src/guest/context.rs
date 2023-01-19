@@ -1,4 +1,4 @@
-use crate::{mm::{PageTable, VirtPageNum, VirtAddr}, guest::translate_guest_paddr};
+use crate::mm::PageTable;
 
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -54,7 +54,9 @@ impl ShadowState {
     pub fn get_satp(&self) -> usize { self.satp }
 
     pub fn write_sstatus(&mut self, val: usize) { self.sstatus  = val}
-    pub fn write_stvec(&mut self, val: usize) { self.stvec = val }
+    pub fn write_stvec(&mut self, val: usize) { 
+        self.stvec = val 
+    }
     pub fn write_sie(&mut self, val: usize) { self.sie = val}
     pub fn write_sscratch(&mut self, val: usize) { self.sscratch = val }
     pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
@@ -66,20 +68,7 @@ impl ShadowState {
     // 是否开启分页
     pub fn paged(&self) -> bool { self.satp != 0 }
 
-    /// 将 guest 虚拟地址翻译成 guest 物理地址(即 host 虚拟地址)
-    pub fn translate_guest_vaddr(&self, guest_vaddr: usize) -> usize {
-        if let Some(shadow_pg) = &self.root_page_table {
-            let offset = guest_vaddr & 0xfff;
-            let guest_vaddr = VirtAddr(guest_vaddr);
-            let guest_vpn: VirtPageNum = guest_vaddr.floor();
-            hdebug!("guest_vpn: {:?}, guest_vaddr: {:?}", guest_vpn, guest_vaddr);
-            let guest_ppn = shadow_pg.translate(guest_vpn).unwrap().ppn();
-            let guest_paddr: usize = guest_ppn.into();
-            guest_paddr + offset
-        }else{
-            guest_vaddr
-        }
-    }
+
 }
 
 use crate::trap::trap_return;
