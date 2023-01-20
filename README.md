@@ -19,6 +19,12 @@
 | 0x90000000    | 0x97FFFFFFF  | 0x90000000 | 0x97FFFFFF | Guest Kernel 2   |
 | 0x98000000    | 0x9FFFFFFFF  | 0x98000000 | 0x9FFFFFFF | Guest Kernel 3   |
 
+### Resvered Memory Region
+| VA Start | VA End | Memory Region |
+| ---------|--------| -------------- |
+| 0xFFFFFFFFFFFFF000 | 0xFFFFFFFFFFFFFFFF | Trampoline |
+| 0xFFFFFFFFFFFFE000 | 0xFFFFFFFFFFFFEFFF | Trap Context |
+
 ### Guest Kernel Memory Region
 | GVA | GPA | HVA | Memory Region |  
 | ---- | ---- | ---- | ---- |  
