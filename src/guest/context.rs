@@ -16,10 +16,9 @@ pub struct ShadowState {
     satp: usize,
 
     // Whether the guest is in S-Mode.
-    // smode: bool,
 
     /// 影子页表
-    pub shadow_pgt: ShadowPageTable
+    pub shadow_page_tables: ShadowPageTables
 }
 
 impl ShadowState {
@@ -35,7 +34,7 @@ impl ShadowState {
             satp: 0,
 
             // smode: true,
-            shadow_pgt: ShadowPageTable::new()
+            shadow_page_tables: ShadowPageTables::new()
         }
     }
 
@@ -68,7 +67,8 @@ impl ShadowState {
 
 use crate::trap::trap_return;
 
-use super::shadow_pgt::ShadowPageTable;
+use super::pmap::ShadowPageTables;
+
 
 #[repr(C)]
 /// task context structure containing some registers

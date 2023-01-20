@@ -6,7 +6,6 @@ use crate::constants::csr;
 
 mod switch;
 mod context;
-mod shadow_pgt;
 mod pmap;
 
 use context::TaskContext;
@@ -150,7 +149,7 @@ pub fn satp_handler(satp: usize) {
             let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
             let id = inner.run_id;
             let guest = &mut inner.kernels[id];
-            guest.install_shadow_page_table(satp);
+            guest.install_guest_shadow_page_table(satp);
             drop(inner);
             write_shadow_csr(csr::satp, satp);
         }
@@ -206,10 +205,21 @@ impl GuestKernel {
     }
 
     pub fn get_user_token(&self) -> usize {
-        if let Some(shadow_pgt) = self.shadow_state.shadow_pgt.guest_shadow_pgt() {
-            return shadow_pgt.token()
+        match self.shadow() {
+            PageTableRoot::GPA => { self.memory.token() }
+            PageTableRoot::GVA => { 
+                if let Some(spt) = self.shadow_state.shadow_page_tables.find_guest_page_table()  {
+                    return spt.token()
+                }
+                panic!()
+            }
+            PageTableRoot::UVA => {
+                if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(PageTableRoot::UVA, self.shadow_state.get_satp()) {
+                    return spt.token()
+                }
+                panic!()
+            }
         }
-        self.memory.token()
     }
 
     /// 用来检查应当使用哪一级的影子页表

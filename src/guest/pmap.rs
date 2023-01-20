@@ -1,3 +1,5 @@
+use alloc::collections::VecDeque;
+
 use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry};
 use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1 };
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
@@ -14,10 +16,55 @@ pub enum PageTableRoot {
     UVA
 }
 
+pub struct ShadowPageTable {
+    mode: PageTableRoot,
+    satp: usize,
+    page_table: PageTable
+}
+
+impl ShadowPageTable {
+    pub fn new(mode: PageTableRoot, satp: usize, page_table: PageTable) -> Self {
+        Self {
+            mode,
+            satp,
+            page_table
+        }
+    }
+}
+
 /// 用来存放 Guest
-pub struct PageTables {
-    /// 分别为 GPA, GVA, UVA 的影子页表根目录
-    page_table_root: [Option<usize>; 3]
+pub struct ShadowPageTables {
+    page_tables: VecDeque<ShadowPageTable>
+}
+
+impl ShadowPageTables {
+    pub const fn new() -> Self {
+        Self {
+            page_tables: VecDeque::new()
+        }
+    }
+
+    pub fn push(&mut self, shadow_page_table: ShadowPageTable) {
+        self.page_tables.push_back(shadow_page_table);
+    }
+
+    pub fn find_shadow_page_table(&self, mode: PageTableRoot, satp: usize) -> Option<&PageTable> {
+        for item in self.page_tables.iter() {
+            if item.mode == mode && item.satp == satp {
+                return Some(&item.page_table)
+            }
+        }
+        None
+    }
+
+    pub fn find_guest_page_table(&self) -> Option<&PageTable> {
+        for item in self.page_tables.iter() {
+            if item.mode == PageTableRoot::GVA {
+                return Some(&item.page_table)
+            }
+        }
+        None
+    }
 }
 
 impl GuestKernel {
@@ -48,7 +95,7 @@ impl GuestKernel {
     }
 
     pub fn translate_guest_vpte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        if let Some(shadow_pgt) = self.shadow_state.shadow_pgt.guest_shadow_pgt() {
+        if let Some(shadow_pgt) = self.shadow_state.shadow_page_tables.find_guest_page_table() {
             // 由于 GHA 与 GPA 是同等映射的，因此翻译成的物理地址可以直接当虚拟地址用
             let pte = shadow_pgt.translate(vpn);
             pte
@@ -88,7 +135,7 @@ impl GuestKernel {
 
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
-    pub fn install_shadow_page_table(&mut self, satp: usize) {
+    pub fn install_guest_shadow_page_table(&mut self, satp: usize) {
         // 根据 satp 获取 guest kernel 根页表的物理地址
         let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
         let root_hva = self.translate_guest_paddr(root_gpa).unwrap();
@@ -130,9 +177,6 @@ impl GuestKernel {
         self.iommu_map(&guest_pgt, &mut shadow_pgt);
 
         // 映射内核跳板页
-        // let trampoline_gppn = guest_pgt.translate_gvpn(VirtPageNum::from(TRAMPOLINE >> 12), &self.memory.page_table()).unwrap().ppn();
-        // let trampoline_hvpn = self.memory.translate(VirtPageNum::from(trampoline_gppn.0)).unwrap().ppn();
-        // let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(trampoline_hvpn.0)).unwrap().ppn();
         let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
         shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
         hdebug!("trampoline gppn: {:?}", trampoline_hppn);
@@ -160,8 +204,14 @@ impl GuestKernel {
         assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().readable(), true);
         assert_eq!(shadow_pgt.translate(VirtPageNum(TRAP_CONTEXT >> 12)).unwrap().writable(), true);
 
+        let shadow_page_table = ShadowPageTable::new(PageTableRoot::GVA, satp, shadow_pgt);
         // 修改影子页表
-        self.shadow_state.shadow_pgt.replace_guest_pgt(shadow_pgt);
+        // self.shadow_state.shadow_pgt.replace_guest_pgt(shadow_pgt);
+        self.shadow_state.shadow_page_tables.push(shadow_page_table);
         hdebug!("Success to construct shadow page table......");
+    }
+
+    pub fn install_user_shadow_page_table(&mut self, satp: usize) {
+        hdebug!("satp: {:#x}", satp);
     }
 }
