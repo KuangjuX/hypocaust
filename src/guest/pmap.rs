@@ -3,6 +3,19 @@ use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNE
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;
 
+/// 页表(影子页表类型)
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum PageTableRoot {
+    /// Host Virtual Addrsss
+    HVA,
+    /// Guest Physical Address
+    GPA,
+    /// Guest Virtual Address
+    GVA,
+    /// User Virtual Address
+    UVA
+}
+
 impl GuestKernel {
     /// GPA -> HPA
     pub fn translate_guest_paddr(&self, paddr: usize) -> Option<usize> {
@@ -71,7 +84,7 @@ impl GuestKernel {
 
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
-    pub fn new_shadow_pgt(&mut self, satp: usize) {
+    pub fn install_shadow_page_table(&mut self, satp: usize) {
         // 根据 satp 获取 guest kernel 根页表的物理地址
         let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
         let root_hva = self.translate_guest_paddr(root_gpa).unwrap();

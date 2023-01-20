@@ -21,7 +21,6 @@ use crate::guest::{current_user_token, current_trap_cx, current_run_id};
 // };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
-use riscv::register::{sstatus, satp};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},

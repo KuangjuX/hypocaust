@@ -3,7 +3,7 @@ use riscv::register::{stval, scause};
 use super::TrapContext;
 use crate::constants::layout::PAGE_SIZE;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
-use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel, translate_guest_vaddr };
+use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel };
 
 /// 处理地址错误问题
 pub fn pfault(ctx: &mut TrapContext) {
@@ -46,7 +46,7 @@ pub fn ifault(ctx: &mut TrapContext) {
     let vhepc = guest.translate_guest_vaddr(ctx.sepc).unwrap();
     drop(inner);
     let i1 = unsafe{ core::ptr::read(vhepc as *const u16) };
-    let mut len = riscv_decode::instruction_length(i1);
+    let len = riscv_decode::instruction_length(i1);
     let inst = match len {
         2 => i1 as u32,
         4 => unsafe{ core::ptr::read(vhepc as *const u32) },
@@ -126,6 +126,7 @@ pub fn ifault(ctx: &mut TrapContext) {
             }
             riscv_decode::Instruction::Sret => {
                 ctx.sepc = get_shadow_csr(crate::constants::csr::sepc);
+                return;
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 if i.rs1() == 0 {

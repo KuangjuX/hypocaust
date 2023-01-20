@@ -8,7 +8,7 @@
 #![feature(alloc_error_handler)]
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
-// #![deny(warnings)]
+#![deny(warnings)]
 
 
 extern crate alloc;

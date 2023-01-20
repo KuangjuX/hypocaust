@@ -141,12 +141,20 @@ pub fn write_shadow_csr(csr: usize, val: usize) {
 /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
 /// 4. Finally, VMM sets the real satp to point to the shadow page table
 pub fn satp_handler(satp: usize) {
-    hdebug!("satp: {:#x}", satp);
-    // 获取 guest kernel 
-    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let guest = &mut inner.kernels[id];
-    guest.new_shadow_pgt(satp);
+    // hdebug!("satp: {:#x}", satp);
+    match (satp >> 60) & 0xf {
+        0 => { write_shadow_csr(csr::satp, satp)}
+        8 => {
+            // 获取 guest kernel 
+            let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+            let id = inner.run_id;
+            let guest = &mut inner.kernels[id];
+            guest.install_shadow_page_table(satp);
+            drop(inner);
+            write_shadow_csr(csr::satp, satp);
+        }
+        _ => { panic!("Atttempted to install page table with unsupported mode") }
+    } 
 }
 
 /// Guest Kernel 结构体
