@@ -1,4 +1,4 @@
-use crate::mm::PageTable;
+// use crate::mm::PageTable;
 
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
@@ -16,10 +16,7 @@ pub struct ShadowState {
     satp: usize,
 
     // Whether the guest is in S-Mode.
-    smode: bool,
-
-    // 根目录页表
-    root_page_table: Option<PageTable>,
+    // smode: bool,
 
     /// 影子页表
     pub shadow_pgt: ShadowPageTable
@@ -37,9 +34,7 @@ impl ShadowState {
             stval: 0,
             satp: 0,
 
-            smode: true,
-
-            root_page_table: None,
+            // smode: true,
             shadow_pgt: ShadowPageTable::new()
         }
     }
@@ -64,7 +59,7 @@ impl ShadowState {
     pub fn write_stval(&mut self, val: usize) { self.stval  = val }
     pub fn write_satp(&mut self, val: usize) { self.satp = val }
 
-    pub fn smode(&self) -> bool { self.smode } 
+    // pub fn smode(&self) -> bool { self.smode } 
     // 是否开启分页
     pub fn paged(&self) -> bool { self.satp != 0 }
 

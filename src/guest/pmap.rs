@@ -6,14 +6,18 @@ use super::GuestKernel;
 /// 页表(影子页表类型)
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PageTableRoot {
-    /// Host Virtual Addrsss
-    HVA,
     /// Guest Physical Address
     GPA,
     /// Guest Virtual Address
     GVA,
     /// User Virtual Address
     UVA
+}
+
+/// 用来存放 Guest
+pub struct PageTables {
+    /// 分别为 GPA, GVA, UVA 的影子页表根目录
+    page_table_root: [Option<usize>; 3]
 }
 
 impl GuestKernel {

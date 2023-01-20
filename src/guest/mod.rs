@@ -16,6 +16,7 @@ use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
 
 use self::context::ShadowState;
+use self::pmap::PageTableRoot;
 
 
 lazy_static! {
@@ -164,7 +165,9 @@ pub struct GuestKernel {
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState,
-    pub index: usize
+    pub index: usize,
+    /// Guest OS 是否运行在 S mode
+    pub smode: bool
 }
 
 impl GuestKernel {
@@ -187,7 +190,8 @@ impl GuestKernel {
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
-            index
+            index,
+            smode: true
         };
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();
@@ -208,6 +212,16 @@ impl GuestKernel {
         self.memory.token()
     }
 
+    /// 用来检查应当使用哪一级的影子页表
+    pub fn shadow(&self) -> PageTableRoot {
+        if (self.shadow_state.get_satp() >> 60) & 0xf == 0 {
+            PageTableRoot::GPA
+        }else if !self.smode {
+            PageTableRoot::UVA
+        }else {
+            PageTableRoot::GVA
+        }
+    }
     
 
 }
