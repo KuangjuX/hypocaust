@@ -25,6 +25,10 @@ pub const GUEST_KERNEL_VIRT_START_3: usize = 0x8000_0000;
 
 pub const GUEST_KERNEL_OFFSET_1: usize = 0x800_0000;
 
+/// 测试内核的跳板页和 Trap Context 的地址
+pub const GUEST_MAX_VA: usize = 1 << (9 + 9 + 9 + 12 - 1);
+pub const GUEST_TRAMPOLINE: usize = GUEST_MAX_VA - PAGE_SIZE;
+pub const GUEST_TRAP_CONTEXT: usize = GUEST_TRAMPOLINE - PAGE_SIZE;
 
 
 /// 虚拟地址最高页为跳板页

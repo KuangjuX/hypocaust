@@ -1,7 +1,7 @@
 use alloc::collections::VecDeque;
 
 use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry};
-use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1 };
+use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, GUEST_TRAMPOLINE, GUEST_TRAP_CONTEXT };
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;
 
@@ -179,9 +179,36 @@ impl GuestKernel {
                     if gppn.executable() {
                         pte_flags |= PTEFlags::X;
                     }
+                    // hdebug!("map user program: gvpn: {:?}, hppn: {:?}", gvpn, hppn);
                     shadow_pgt.map(gvpn, hppn, pte_flags)
                 }
             }
+        }
+    }
+
+    pub fn try_map_user_trampoline(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+        // 映射 guest 跳板页
+        let guest_trampoline_gvpn = VirtPageNum::from(GUEST_TRAMPOLINE >> 12);
+        if let Some(guest_trampoline_gpte) = guest_pgt.translate_gvpn(guest_trampoline_gvpn, &self.memory.page_table()) {
+            let guest_trampoline_gppn = guest_trampoline_gpte.ppn();
+            let guest_trampoline_hvpn = VirtPageNum::from(
+                self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
+            );
+            let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
+            shadow_pgt.map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
+        }
+    }
+
+    pub fn try_map_user_trap_context(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+        let guest_trampoline_gvpn = VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12);
+        if let Some(guest_trampoline_gpte) = guest_pgt.translate_gvpn(guest_trampoline_gvpn, &self.memory.page_table()) {
+            let guest_trampoline_gppn = guest_trampoline_gpte.ppn();
+            let guest_trampoline_hvpn = VirtPageNum::from(
+                self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
+            );
+            let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
+            hdebug!("guest_trampoline_gvpn: {:?}, guest_trampoline_hppn: {:?}", guest_trampoline_gvpn, guest_trampoline_hppn);
+            shadow_pgt.map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
         }
     }
     
@@ -209,24 +236,19 @@ impl GuestKernel {
             // 尝试映射内核地址空间
             self.try_map_guest_area(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户地址空间
-            // self.try_map_user_area(&guest_pgt, &mut shadow_pgt);
+            self.try_map_user_area(&guest_pgt, &mut shadow_pgt);
             // 映射 IOMMU 
-            self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
+            // self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
+            // 尝试映射用户空间的跳板页
+            self.try_map_user_trampoline(&guest_pgt, &mut shadow_pgt);
+            // 尝试映射用户空间 Trap Context
+            self.try_map_user_trap_context(&guest_pgt, &mut shadow_pgt);
 
             // 映射内核跳板页
             let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
             shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
             hdebug!("trampoline gppn: {:?}", trampoline_hppn);
 
-            // 映射 guest 跳板页
-            let guest_trampoline_gvpn = VirtPageNum::from((TRAP_CONTEXT - (1 + self.index * 2) * PAGE_SIZE) >> 12);
-            let guest_trampoline_gppn = guest_pgt.translate_gvpn(VirtPageNum::from(TRAMPOLINE >> 12), &self.memory.page_table()).unwrap().ppn();
-            let guest_trampoline_hvpn = VirtPageNum::from(
-                self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
-            );
-
-            let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
-            shadow_pgt.map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
 
             // 映射 TRAP CONTEXT(TRAP 实际上在 Guest OS 中并没有被映射，但是我们在切换跳板页的时候需要使用到)
             let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);

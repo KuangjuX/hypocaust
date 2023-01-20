@@ -1,7 +1,7 @@
 use riscv::register::{stval, scause};
 
 use super::TrapContext;
-use crate::constants::layout::PAGE_SIZE;
+// use crate::constants::layout::PAGE_SIZE;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
 use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel };
 
@@ -23,7 +23,7 @@ pub fn pfault(ctx: &mut TrapContext) {
 
 /// 向 guest kernel 转发异常
 pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
-    hdebug!("forward expection");
+    // hdebug!("forward expection");
     let state = &mut guest.shadow_state;
     state.write_scause(scause::read().code());
     state.write_sepc(ctx.sepc);
@@ -31,6 +31,9 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let stvec = state.get_stvec();
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     ctx.sepc = stvec;
+    hdebug!("stvec: {:#x}", stvec);
+    panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
+    // panic!()
 }
 
 /// 向 guest kernel 转发中断
@@ -92,14 +95,14 @@ pub fn ifault(ctx: &mut TrapContext) {
                 let val = ctx.x[rs];
                 match csr {
                     crate::constants::csr::satp => { satp_handler(val) },
-                    crate::constants::csr::stvec => { 
-                        let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-                        let id = inner.run_id;
-                        let guest = &mut inner.kernels[id];
-                        let state = &mut guest.shadow_state;
-                        let stvec = val - (2 + 2 * id) * PAGE_SIZE;
-                        state.write_stvec(stvec);
-                    }
+                    // crate::constants::csr::stvec => { 
+                    //     let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+                    //     let id = inner.run_id;
+                    //     let guest = &mut inner.kernels[id];
+                    //     let state = &mut guest.shadow_state;
+                    //     let stvec = val - (2 + 2 * id) * PAGE_SIZE;
+                    //     state.write_stvec(stvec);
+                    // }
                     _ => { write_shadow_csr(csr, val); }
                 }
             },
