@@ -1,10 +1,12 @@
 use alloc::collections::VecDeque;
+use alloc::vec::Vec;
 
 use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry, PhysPageNum};
 use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, GUEST_TRAMPOLINE, GUEST_TRAP_CONTEXT };
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;
 
+/// 内存信息，用于帮助做地址映射
 #[allow(unused)]
 mod segment_layout {
     pub const HART_SEGMENT_SIZE: usize = 128 * 1024 * 1024;
@@ -223,10 +225,32 @@ impl GuestKernel {
         todo!()
     }
 
+
     /// 对于页表的 PTE 的标志位应当标志为只读，用来同步 Guest Page Table 和 Shadow Page Table
-    pub fn map_pte(&self, root_gpa: usize, _guest_pgt: &PageTable, _shadow_pgt: &mut PageTable) {
+    pub fn map_page_table(&self, root_gpa: usize, shadow_pgt: &mut PageTable) {
         hdebug!("root guest page table: {:#x}", root_gpa);
-        // let root_hppn = self.gpa2hpa()
+        let root_gvpn = VirtPageNum::from(root_gpa >> 12);
+        // 广度优先搜索遍历所有页表
+        let mut queue = VecDeque::new();
+        let mut buffer = Vec::new();
+        queue.push_back(root_gvpn); 
+        for _ in 0..3 {
+            while !queue.is_empty() {
+                let vpn = queue.pop_front().unwrap();
+                let ppn = PhysPageNum::from(self.gpa2hpa(vpn.0 << 12) >> 12);
+                shadow_pgt.map(vpn, ppn, PTEFlags::R | PTEFlags::U);
+                let ptes = ppn.get_pte_array();
+                for pte in ptes {
+                    if pte.is_valid() {
+                        // hdebug!("pte ppn: {:#x}", pte.ppn().0);
+                        buffer.push(VirtPageNum::from(pte.ppn().0))
+                    }
+                } 
+            }
+            while !buffer.is_empty() {
+                queue.push_back(buffer.pop().unwrap());
+            }
+        }
     }
 
     /// 根据 satp 构建影子页表
@@ -244,7 +268,7 @@ impl GuestKernel {
             // 构建影子页表
             let mut shadow_pgt = PageTable::new();
             // 映射客户页表
-            self.map_pte(root_gpa, &guest_pgt, &mut shadow_pgt);
+            self.map_page_table(root_gpa, &mut shadow_pgt);
             // 尝试映射内核地址空间
             self.try_map_guest_area(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户地址空间
