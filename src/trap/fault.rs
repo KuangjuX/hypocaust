@@ -14,6 +14,41 @@ pub fn pfault(ctx: &mut TrapContext) {
     let guest = &mut inner.kernels[id];
     if let Some(vhaddr) = guest.translate_valid_guest_vaddr(stval) {
         // 处理地址错误
+        if guest.is_guest_page_table(stval) {
+            // 检测到 Guest OS 修改页表
+            hdebug!("Guest OS try to write page table, sepc: {:#x}, stval: {:#x}", ctx.sepc, stval);
+            let sepc = guest.gpa2hpa(ctx.sepc);
+            let i1 = unsafe{ core::ptr::read(sepc as *const u16) };
+            let len = riscv_decode::instruction_length(i1);
+            let inst = match len {
+                2 => i1 as u32,
+                4 => unsafe{ core::ptr::read(sepc as *const u32) },
+                _ => unreachable!()
+            };
+            if let Ok(inst) = riscv_decode::decode(inst) {
+                match inst {
+                    riscv_decode::Instruction::Sd(i) => {
+                        let rs1 = i.rs1() as usize;
+                        let rs2 = i.rs2() as usize;
+                        let offset: isize = if i.imm() > 2048 {
+                            ((0b1111 << 12) | i.imm()) as i16 as isize
+                        }else{ 
+                            i.imm() as isize
+                        };
+                        let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+                        let paddr = guest.gpa2hpa(vaddr);
+                        unsafe{
+                            core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
+                        }
+                        guest.sync_shadow_page_table();
+                    },
+                    _ => panic!()
+                }
+            }
+            // panic!();
+            ctx.sepc += len;
+            return;
+        }
         panic!("stval: {:#x}, vhaddr: {:#x}, sepc: {:#x}, cause: {:?}", stval, vhaddr, ctx.sepc, scause::read().cause());
     }else{
         // 转发到 Guest OS 处理

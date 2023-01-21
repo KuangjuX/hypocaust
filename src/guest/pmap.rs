@@ -66,14 +66,23 @@ impl ShadowPageTables {
         None
     }
 
+    pub fn find_shadow_page_table_mut(&mut self, satp: usize) -> Option<&mut PageTable> {
+        for item in self.page_tables.iter_mut() {
+            if item.satp == satp {
+                return Some(&mut item.page_table)
+            }
+        }
+        None
+    }
+
 }
 
 impl GuestKernel {
-    fn gpa2hpa(&self, va: usize) -> usize {
+    pub fn gpa2hpa(&self, va: usize) -> usize {
         va + (self.index + 1) * segment_layout::HART_SEGMENT_SIZE
     }
 
-    fn hpa2gpa(&self, pa: usize) -> usize {
+    pub fn hpa2gpa(&self, pa: usize) -> usize {
         pa - (self.index + 1) * segment_layout::HART_SEGMENT_SIZE
     }
 
@@ -125,7 +134,7 @@ impl GuestKernel {
     }
 
     /// 映射 IOMMU 
-    pub fn try_map_iommu(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+    fn try_map_iommu(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
         // 映射 QEMU Virt
         for index in (0..QEMU_VIRT_SIZE).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from((QEMU_VIRT_START + index) >> 12);
@@ -138,7 +147,7 @@ impl GuestKernel {
         }
     }
 
-    pub fn try_map_guest_area(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+    fn try_map_guest_area(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
         for gva in (GUEST_KERNEL_VIRT_START_1..GUEST_KERNEL_VIRT_END_1).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from(gva >> 12);
             let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
@@ -163,7 +172,7 @@ impl GuestKernel {
         }
     }
 
-    pub fn try_map_user_area(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+    fn try_map_user_area(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
         for gva in (0..0x800_0000).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from(gva >> 12);
             let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
@@ -192,7 +201,7 @@ impl GuestKernel {
         }
     }
 
-    pub fn try_map_user_trampoline(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+    fn try_map_user_trampoline(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
         // 映射 guest 跳板页
         let guest_trampoline_gvpn = VirtPageNum::from(GUEST_TRAMPOLINE >> 12);
         if let Some(guest_trampoline_gpte) = guest_pgt.translate_gvpn(guest_trampoline_gvpn, &self.memory.page_table()) {
@@ -206,7 +215,7 @@ impl GuestKernel {
         }
     }
 
-    pub fn try_map_user_trap_context(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
+    fn try_map_user_trap_context(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
         let guest_trap_context_gvpn = VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12);
         if let Some(guest_trap_context_gpte) = guest_pgt.translate_gvpn(guest_trap_context_gvpn, &self.memory.page_table()) {
             let guest_trap_context_gppn = guest_trap_context_gpte.ppn();
@@ -218,17 +227,49 @@ impl GuestKernel {
             shadow_pgt.try_map(guest_trap_context_gvpn, guest_trap_context_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
         }
     }
+
+
+    /// 同步影子页表
+    pub fn sync_shadow_page_table(&mut self) {
+        let satp = self.shadow_state.get_satp();
+        let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
+        let root_hppn = PhysPageNum::from(self.gpa2hpa(root_gpa) >> 12);
+        let guest_pgt = PageTable::from_ppn(root_hppn);
+        let shadow_page_table = self.shadow_state.shadow_page_tables.find_shadow_page_table_mut(satp).unwrap();
+    }
     
     /// 验证需要映射的内存是否为客户页表的页表项，若为页表项，则将
     /// 权限位设置为不可写，以便在 Guest OS 修改页表项时陷入 VMM
-    pub fn verify_pte(&self) -> bool {
-        todo!()
+    pub fn is_guest_page_table(&self, mut vaddr: usize) -> bool {
+        // 虚拟地址页对齐
+        vaddr = (vaddr >> 12) << 12;
+        let root = (self.shadow_state.get_satp() << 12) & 0x7f_ffff_ffff;
+        let root_vpn = VirtPageNum::from(root >> 12);
+        let mut queue = VecDeque::new();
+        let mut buffer = Vec::new();
+        queue.push_back(root_vpn); 
+        for _ in 0..3 {
+            while !queue.is_empty() {
+                let vpn = queue.pop_front().unwrap();
+                let ppn = PhysPageNum::from(self.gpa2hpa(vpn.0 << 12) >> 12);
+                let ptes = ppn.get_pte_array();
+                for pte in ptes {
+                    if pte.ppn().0 == (vaddr >> 12){ return true }
+                    if pte.is_valid() {
+                        buffer.push(VirtPageNum::from(pte.ppn().0))
+                    }
+                } 
+            }
+            while !buffer.is_empty() {
+                queue.push_back(buffer.pop().unwrap());
+            }
+        }
+        false
     }
 
 
     /// 对于页表的 PTE 的标志位应当标志为只读，用来同步 Guest Page Table 和 Shadow Page Table
     pub fn map_page_table(&self, root_gpa: usize, shadow_pgt: &mut PageTable) {
-        hdebug!("root guest page table: {:#x}", root_gpa);
         let root_gvpn = VirtPageNum::from(root_gpa >> 12);
         // 广度优先搜索遍历所有页表
         let mut queue = VecDeque::new();
@@ -283,14 +324,12 @@ impl GuestKernel {
             // 映射内核跳板页
             let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
             shadow_pgt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-            hdebug!("trampoline gppn: {:?}", trampoline_hppn);
 
 
             // 映射 TRAP CONTEXT(TRAP 实际上在 Guest OS 中并没有被映射，但是我们在切换跳板页的时候需要使用到)
             let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
             let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
             shadow_pgt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
-            hdebug!("trap ctx hvpn: {:?}, trap ctx hppn: {:?}", trapctx_hvpn, trapctx_hppn);
 
             // 测试映射是否正确
             assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().readable(), true);
