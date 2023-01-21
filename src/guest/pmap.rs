@@ -1,9 +1,16 @@
 use alloc::collections::VecDeque;
 
-use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry};
+use crate::mm::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry, PhysPageNum};
 use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, GUEST_TRAMPOLINE, GUEST_TRAP_CONTEXT };
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;
+
+#[allow(unused)]
+mod segment_layout {
+    pub const HART_SEGMENT_SIZE: usize = 128 * 1024 * 1024;
+}
+
+
 
 /// 页表(影子页表类型)
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -57,17 +64,17 @@ impl ShadowPageTables {
         None
     }
 
-    // pub fn find_guest_page_table(&self) -> Option<&PageTable> {
-    //     for item in self.page_tables.iter() {
-    //         if item.mode == PageTableRoot::GVA {
-    //             return Some(&item.page_table)
-    //         }
-    //     }
-    //     None
-    // }
 }
 
 impl GuestKernel {
+    fn gpa2hpa(&self, va: usize) -> usize {
+        va + (self.index + 1) * segment_layout::HART_SEGMENT_SIZE
+    }
+
+    fn hpa2gpa(&self, pa: usize) -> usize {
+        pa - (self.index + 1) * segment_layout::HART_SEGMENT_SIZE
+    }
+
     /// GPA -> HPA
     pub fn translate_guest_paddr(&self, paddr: usize) -> Option<usize> {
         let offset = paddr & 0xfff;
@@ -124,7 +131,7 @@ impl GuestKernel {
                 let gppn = gppte.ppn();
                 let hvpn = self.memory.translate(VirtPageNum::from(gppn.0)).unwrap().ppn();
                 let hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(hvpn.0)).unwrap().ppn();
-                shadow_pgt.map(VirtPageNum::from(gvpn), hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
+                shadow_pgt.try_map(gvpn, hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
             }
         }
     }
@@ -137,10 +144,7 @@ impl GuestKernel {
             // TODO: 将影子页表的标志位设置为不可写，当 Guest OS 修改页表的时候
             if let Some(gppn) = gppn {
                 if gppn.is_valid() {
-                    let gpa = gppn.ppn().0 << 12;
-                    let hva = self.translate_guest_paddr(gpa).unwrap();
-                    let hvpn = VirtPageNum::from(hva >> 12);
-                    let hppn = KERNEL_SPACE.exclusive_access().translate(hvpn).unwrap().ppn();
+                    let hppn = PhysPageNum::from(self.gpa2hpa(gppn.ppn().0 << 12) >> 12);
                     let mut pte_flags = PTEFlags::U;
                     if gppn.readable() {
                         pte_flags |= PTEFlags::R;
@@ -151,7 +155,7 @@ impl GuestKernel {
                     if gppn.executable() {
                         pte_flags |= PTEFlags::X;
                     }
-                    shadow_pgt.map(gvpn, hppn, pte_flags)
+                    shadow_pgt.try_map(gvpn, hppn, pte_flags)
                 }
             }
         }
@@ -166,9 +170,10 @@ impl GuestKernel {
             if let Some(gppn) = gppn {
                 if gppn.is_valid() {
                     let gpa = gppn.ppn().0 << 12;
-                    let hva = self.translate_guest_paddr(gpa).unwrap();
-                    let hvpn = VirtPageNum::from(hva >> 12);
-                    let hppn = KERNEL_SPACE.exclusive_access().translate(hvpn).unwrap().ppn();
+                    // let hva = self.translate_guest_paddr(gpa).unwrap();
+                    // let hvpn = VirtPageNum::from(hva >> 12);
+                    // let hppn = KERNEL_SPACE.exclusive_access().translate(hvpn).unwrap().ppn();
+                    let hppn = PhysPageNum::from(self.gpa2hpa(gpa) >> 12);
                     let mut pte_flags = PTEFlags::U;
                     if gppn.readable() {
                         pte_flags |= PTEFlags::R;
@@ -179,8 +184,7 @@ impl GuestKernel {
                     if gppn.executable() {
                         pte_flags |= PTEFlags::X;
                     }
-                    // hdebug!("map user program: gvpn: {:?}, hppn: {:?}", gvpn, hppn);
-                    shadow_pgt.map(gvpn, hppn, pte_flags)
+                    shadow_pgt.try_map(gvpn, hppn, pte_flags)
                 }
             }
         }
@@ -191,24 +195,25 @@ impl GuestKernel {
         let guest_trampoline_gvpn = VirtPageNum::from(GUEST_TRAMPOLINE >> 12);
         if let Some(guest_trampoline_gpte) = guest_pgt.translate_gvpn(guest_trampoline_gvpn, &self.memory.page_table()) {
             let guest_trampoline_gppn = guest_trampoline_gpte.ppn();
-            let guest_trampoline_hvpn = VirtPageNum::from(
-                self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
-            );
-            let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
-            shadow_pgt.map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
+            // let guest_trampoline_hvpn = VirtPageNum::from(
+            //     self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
+            // );
+            // let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
+            let guest_trampoline_hppn = PhysPageNum::from(self.gpa2hpa(guest_trampoline_gppn.0 << 12) >> 12);
+            shadow_pgt.try_map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
         }
     }
 
     pub fn try_map_user_trap_context(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
-        let guest_trampoline_gvpn = VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12);
-        if let Some(guest_trampoline_gpte) = guest_pgt.translate_gvpn(guest_trampoline_gvpn, &self.memory.page_table()) {
-            let guest_trampoline_gppn = guest_trampoline_gpte.ppn();
-            let guest_trampoline_hvpn = VirtPageNum::from(
-                self.memory.translate(VirtPageNum::from(guest_trampoline_gppn.0)).unwrap().ppn().0
-            );
-            let guest_trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
-            hdebug!("guest_trampoline_gvpn: {:?}, guest_trampoline_hppn: {:?}", guest_trampoline_gvpn, guest_trampoline_hppn);
-            shadow_pgt.map(guest_trampoline_gvpn, guest_trampoline_hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
+        let guest_trap_context_gvpn = VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12);
+        if let Some(guest_trap_context_gpte) = guest_pgt.translate_gvpn(guest_trap_context_gvpn, &self.memory.page_table()) {
+            let guest_trap_context_gppn = guest_trap_context_gpte.ppn();
+            // let guest_trampoline_hvpn = VirtPageNum::from(
+            //     self.memory.translate(VirtPageNum::from(guest_trap_context_gppn.0)).unwrap().ppn().0
+            // );
+            // let guest_trap_context_hppn = KERNEL_SPACE.exclusive_access().translate(guest_trampoline_hvpn).unwrap().ppn();
+            let guest_trap_context_hppn = PhysPageNum::from(self.gpa2hpa(guest_trap_context_gppn.0 << 12) >> 12);
+            shadow_pgt.try_map(guest_trap_context_gvpn, guest_trap_context_hppn, PTEFlags::R | PTEFlags::X | PTEFlags::U);
         }
     }
     
@@ -218,6 +223,12 @@ impl GuestKernel {
         todo!()
     }
 
+    /// 对于页表的 PTE 的标志位应当标志为只读，用来同步 Guest Page Table 和 Shadow Page Table
+    pub fn map_pte(&self, root_gpa: usize, _guest_pgt: &PageTable, _shadow_pgt: &mut PageTable) {
+        hdebug!("root guest page table: {:#x}", root_gpa);
+        // let root_hppn = self.gpa2hpa()
+    }
+
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
     pub fn install_shadow_page_table(&mut self, satp: usize) {
@@ -225,20 +236,21 @@ impl GuestKernel {
             // 如果影子页表中没有发现，新建影子页表
             // 根据 satp 获取 guest kernel 根页表的物理地址
             let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
-            let root_hva = self.translate_guest_paddr(root_gpa).unwrap();
-            let root_hppn =  KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(root_hva >> 12)).unwrap().ppn();
+            let root_hppn = PhysPageNum::from(self.gpa2hpa(root_gpa) >> 12);
             let guest_pgt = PageTable::from_ppn(root_hppn);
             // 翻译的时候不能直接翻译，因为此时取出的 pte 都是 Guest OS 的物理地址，需要将 pte 翻译成 hypervisor 的地址
             // 即将 guest virtual address -> host virtual address
             // 最终翻译的结果为 GPA (Guest Physical Address)
             // 构建影子页表
             let mut shadow_pgt = PageTable::new();
+            // 映射客户页表
+            self.map_pte(root_gpa, &guest_pgt, &mut shadow_pgt);
             // 尝试映射内核地址空间
             self.try_map_guest_area(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户地址空间
             self.try_map_user_area(&guest_pgt, &mut shadow_pgt);
             // 映射 IOMMU 
-            // self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
+            self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间的跳板页
             self.try_map_user_trampoline(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间 Trap Context

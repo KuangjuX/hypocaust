@@ -14,7 +14,7 @@ pub fn pfault(ctx: &mut TrapContext) {
     let guest = &mut inner.kernels[id];
     if let Some(vhaddr) = guest.translate_valid_guest_vaddr(stval) {
         // 处理地址错误
-        panic!("stval: {:#x}, vhaddr: {:#x}, cause: {:?}", stval, vhaddr, scause::read().cause());
+        panic!("stval: {:#x}, vhaddr: {:#x}, sepc: {:#x}, cause: {:?}", stval, vhaddr, ctx.sepc, scause::read().cause());
     }else{
         // 转发到 Guest OS 处理
         forward_exception(guest, ctx)

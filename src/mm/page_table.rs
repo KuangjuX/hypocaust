@@ -164,6 +164,15 @@ impl PageTable {
         *pte = PageTableEntry::empty();
     }
 
+    pub fn try_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
+        match self.translate(vpn) {
+            Some(pte) => {
+                if !pte.is_valid(){ self.map(vpn, ppn, flags) }
+            },
+            None => { self.map(vpn, ppn, flags) }
+        }
+    }
+
     pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
     }
