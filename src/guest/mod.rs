@@ -149,7 +149,7 @@ pub fn satp_handler(satp: usize) {
             let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
             let id = inner.run_id;
             let guest = &mut inner.kernels[id];
-            guest.install_shadow_page_table(satp);
+            guest.make_shadow_page_table(satp);
             drop(inner);
             write_shadow_csr(csr::satp, satp);
         }
@@ -209,7 +209,7 @@ impl GuestKernel {
             PageTableRoot::GPA => { self.memory.token() }
             PageTableRoot::GVA | PageTableRoot::UVA=> { 
                 if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.get_satp()) {
-                    return spt.token()
+                    return spt.page_table.token()
                 }
                 panic!()
             }

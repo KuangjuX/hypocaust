@@ -9,6 +9,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
 #![deny(warnings)]
+#![feature(core_intrinsics)]
 
 
 extern crate alloc;

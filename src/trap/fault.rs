@@ -1,6 +1,7 @@
 use riscv::register::{stval, scause};
 
 use super::TrapContext;
+use crate::mm::PageTableEntry;
 // use crate::constants::layout::PAGE_SIZE;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
 use crate::guest::{ get_shadow_csr, write_shadow_csr, satp_handler, GUEST_KERNEL_MANAGER, GuestKernel };
@@ -40,7 +41,8 @@ pub fn pfault(ctx: &mut TrapContext) {
                         unsafe{
                             core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
                         }
-                        guest.sync_shadow_page_table();
+                        guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
+                        // panic!()
                     },
                     _ => panic!()
                 }
@@ -130,14 +132,6 @@ pub fn ifault(ctx: &mut TrapContext) {
                 let val = ctx.x[rs];
                 match csr {
                     crate::constants::csr::satp => { satp_handler(val) },
-                    // crate::constants::csr::stvec => { 
-                    //     let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-                    //     let id = inner.run_id;
-                    //     let guest = &mut inner.kernels[id];
-                    //     let state = &mut guest.shadow_state;
-                    //     let stvec = val - (2 + 2 * id) * PAGE_SIZE;
-                    //     state.write_stvec(stvec);
-                    // }
                     _ => { write_shadow_csr(csr, val); }
                 }
             },
