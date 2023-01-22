@@ -69,7 +69,7 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     ctx.sepc = stvec;
     hdebug!("stvec: {:#x}", stvec);
-    panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
+    // panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
     // panic!()
 }
 
@@ -101,7 +101,13 @@ pub fn ifault(ctx: &mut TrapContext) {
                         let c = ctx.x[10];
                         console_putchar(c);
                     },
-                    _ => { panic!("[hypervisor] Error env call")}
+                    // _ => { panic!("[hypervisor] Error env call")}
+                    _ => {
+                        let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+                        let id = inner.run_id;
+                        let guest = &mut inner.kernels[id];
+                        forward_exception(guest, ctx);
+                    }
                 }
             }
             riscv_decode::Instruction::Csrrc(i) => {

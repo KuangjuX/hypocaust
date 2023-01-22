@@ -6,10 +6,10 @@
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+#![feature(core_intrinsics)]
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
 #![deny(warnings)]
-#![feature(core_intrinsics)]
 
 
 extern crate alloc;
