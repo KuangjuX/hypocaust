@@ -137,14 +137,14 @@ pub fn ifault(ctx: &mut TrapContext) {
             }
             // 写 CSR 指令
             riscv_decode::Instruction::Csrrw(i) => {
-                let csr = i.csr() as usize;
-                let rs = i.rs1() as usize;
+                let prev = get_shadow_csr(i.csr() as usize);
                 // 向 Shadow CSR 写入
-                let val = ctx.x[rs];
-                match csr {
+                let val = ctx.x[i.rs1() as usize];
+                match i.csr() as usize {
                     crate::constants::csr::satp => { satp_handler(val) },
-                    _ => { write_shadow_csr(csr, val); }
+                    _ => { write_shadow_csr(i.csr() as usize, val); }
                 }
+                ctx.x[i.rd() as usize] = prev;
             },
             riscv_decode::Instruction::Csrrwi(i) => {
                 let prev = get_shadow_csr(i.csr() as usize);
