@@ -1,5 +1,3 @@
-// use crate::mm::PageTable;
-
 pub struct ShadowState {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
@@ -14,8 +12,6 @@ pub struct ShadowState {
     scause: usize,
     stval: usize,
     satp: usize,
-
-    // Whether the guest is in S-Mode.
 
     /// 影子页表
     pub shadow_page_tables: ShadowPageTables
@@ -52,18 +48,25 @@ impl ShadowState {
         self.stvec = val 
     }
     pub fn write_sie(&mut self, val: usize) { self.sie = val}
-    pub fn write_sscratch(&mut self, val: usize) { self.sscratch = val }
+    pub fn write_sscratch(&mut self, val: usize) { 
+        // hdebug!("sscratch: {:#x}", val);
+        self.sscratch = val 
+    }
     pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
     pub fn write_scause(&mut self, val: usize)  { self.scause = val }
     pub fn write_stval(&mut self, val: usize) { self.stval  = val }
     pub fn write_satp(&mut self, val: usize) { self.satp = val }
 
-    // pub fn smode(&self) -> bool { self.smode } 
+    pub fn smode(&self) -> bool { 
+        self.sstatus.get_bit(8)    
+    } 
     // 是否开启分页
     pub fn paged(&self) -> bool { self.satp != 0 }
 
 
 }
+
+use riscv::addr::BitField;
 
 use crate::trap::trap_return;
 

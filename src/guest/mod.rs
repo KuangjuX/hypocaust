@@ -141,7 +141,7 @@ pub fn write_shadow_csr(csr: usize, val: usize) {
 /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
 /// 4. Finally, VMM sets the real satp to point to the shadow page table
 pub fn satp_handler(satp: usize) {
-    // hdebug!("satp: {:#x}", satp);
+    hdebug!("satp: {:#x}", satp);
     match (satp >> 60) & 0xf {
         0 => { write_shadow_csr(csr::satp, satp)}
         8 => {
@@ -184,7 +184,7 @@ impl GuestKernel {
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
         );
-        let guest_kernel = Self { 
+        let mut guest_kernel = Self { 
             memory,
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
@@ -192,6 +192,10 @@ impl GuestKernel {
             index,
             smode: true
         };
+        // 设置 Guest OS `sstatus` 的 `SPP`
+        let mut sstatus = riscv::register::sstatus::read();
+        sstatus.set_spp(riscv::register::sstatus::SPP::Supervisor);
+        guest_kernel.shadow_state.write_sstatus(sstatus.bits());
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();
         *trap_cx = TrapContext::app_init_context(

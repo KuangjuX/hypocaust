@@ -150,8 +150,8 @@ impl GuestKernel {
         // 映射 QEMU Virt
         for index in (0..QEMU_VIRT_SIZE).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from((QEMU_VIRT_START + index) >> 12);
-            if let Some(gppte) = guest_pgt.translate_gvpn(gvpn, self.memory.page_table()) {
-                let gppn = gppte.ppn();
+            if let Some(gpte) = guest_pgt.translate_gvpn(gvpn, self.memory.page_table()) {
+                let gppn = gpte.ppn();
                 let hvpn = self.memory.translate(VirtPageNum::from(gppn.0)).unwrap().ppn();
                 let hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(hvpn.0)).unwrap().ppn();
                 shadow_pgt.try_map(gvpn, hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
@@ -164,18 +164,17 @@ impl GuestKernel {
             let gvpn = VirtPageNum::from(gva >> 12);
             let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
             // 如果 guest ppn 存在且有效
-            // TODO: 将影子页表的标志位设置为不可写，当 Guest OS 修改页表的时候
-            if let Some(gppn) = gppn {
-                if gppn.is_valid() {
-                    let hppn = PhysPageNum::from(self.gpa2hpa(gppn.ppn().0 << 12) >> 12);
+            if let Some(gpte) = gppn {
+                if gpte.is_valid() {
+                    let hppn = PhysPageNum::from(self.gpa2hpa(gpte.ppn().0 << 12) >> 12);
                     let mut pte_flags = PTEFlags::U;
-                    if gppn.readable() {
+                    if gpte.readable() {
                         pte_flags |= PTEFlags::R;
                     }
-                    if gppn.writable() {
+                    if gpte.writable() {
                         pte_flags |= PTEFlags::W;
                     }
-                    if gppn.executable() {
+                    if gpte.executable() {
                         pte_flags |= PTEFlags::X;
                     }
                     shadow_pgt.try_map(gvpn, hppn, pte_flags)
@@ -189,19 +188,18 @@ impl GuestKernel {
             let gvpn = VirtPageNum::from(gva >> 12);
             let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
             // 如果 guest ppn 存在且有效
-            // TODO: 将影子页表的标志位设置为不可写，当 Guest OS 修改页表的时候
-            if let Some(gppn) = gppn {
-                if gppn.is_valid() {
-                    let gpa = gppn.ppn().0 << 12;
+            if let Some(gpte) = gppn {
+                if gpte.is_valid() {
+                    let gpa = gpte.ppn().0 << 12;
                     let hppn = PhysPageNum::from(self.gpa2hpa(gpa) >> 12);
                     let mut pte_flags = PTEFlags::U;
-                    if gppn.readable() {
+                    if gpte.readable() {
                         pte_flags |= PTEFlags::R;
                     }
-                    if gppn.writable() {
+                    if gpte.writable() {
                         pte_flags |= PTEFlags::W;
                     }
-                    if gppn.executable() {
+                    if gpte.executable() {
                         pte_flags |= PTEFlags::X;
                     }
                     shadow_pgt.try_map(gvpn, hppn, pte_flags)
@@ -227,9 +225,7 @@ impl GuestKernel {
         if let Some(guest_trap_context_gpte) = guest_pgt.translate_gvpn(guest_trap_context_gvpn, &self.memory.page_table()) {
             if guest_trap_context_gpte.is_valid() {
                 let guest_trap_context_gppn = guest_trap_context_gpte.ppn();
-                hdebug!("gppn: {:#x}", guest_trap_context_gppn.0 << 12);
                 let guest_trap_context_hppn = PhysPageNum::from(self.gpa2hpa(guest_trap_context_gppn.0 << 12) >> 12);
-                hdebug!("{:#x} --> {:#x}", GUEST_TRAP_CONTEXT >> 12, guest_trap_context_hppn.0 << 12);
                 shadow_pgt.try_map(guest_trap_context_gvpn, guest_trap_context_hppn, PTEFlags::R | PTEFlags::W | PTEFlags::U);
             }
         }
@@ -411,7 +407,7 @@ impl GuestKernel {
             let pa = (pte.ppn().0 << 12) + va2pa;
             let new_ppn = PhysPageNum::from(pa >> 12);
             spt.page_table.map(map_vpn, new_ppn, flags);
-            hdebug!("sync spt: vpn: {:?}, ppn: {:?}", map_vpn, new_ppn);
+            // hdebug!("sync spt: vpn: {:?}, ppn: {:?}", map_vpn, new_ppn);
         }
      }
 

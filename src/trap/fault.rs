@@ -17,7 +17,7 @@ pub fn pfault(ctx: &mut TrapContext) {
         // 处理地址错误
         if guest.is_guest_page_table(stval) {
             // 检测到 Guest OS 修改页表
-            hdebug!("Guest OS try to write page table, sepc: {:#x}, stval: {:#x}", ctx.sepc, stval);
+            // hdebug!("Guest OS try to write page table, sepc: {:#x}, stval: {:#x}", ctx.sepc, stval);
             let sepc = guest.gpa2hpa(ctx.sepc);
             let i1 = unsafe{ core::ptr::read(sepc as *const u16) };
             let len = riscv_decode::instruction_length(i1);
@@ -66,9 +66,14 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_sepc(ctx.sepc);
     state.write_stval(stval::read());
     let stvec = state.get_stvec();
-    // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     ctx.sepc = stvec;
-    hdebug!("stvec: {:#x}", stvec);
+    // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
+    match guest.shadow_state.smode() {
+        true => {},
+        false => {
+            hdebug!("sscratch: {:#x}", guest.shadow_state.get_sscratch());
+        }
+    }
     // panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
     // panic!()
 }

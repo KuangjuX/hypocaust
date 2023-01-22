@@ -15,7 +15,7 @@ mod context;
 mod fault;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::{current_user_token, current_trap_cx, current_run_id};
+use crate::guest::{current_user_token, current_trap_cx};
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
 // };
@@ -100,15 +100,11 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
     let user_satp = current_user_token();
-    let id = current_run_id();
-    // println!("[hypervisor] user satp: {:#x}", user_satp);
     extern "C" {
         fn __alltraps();
         fn __restore();
     }
     let restore_va = __restore as usize - __alltraps as usize + TRAMPOLINE;
-    // unsafe{ sstatus::set_sum() };
-    // assert_eq!(sstatus::read().sum(), true);
     unsafe {
         asm!(
             "fence.i",
@@ -116,7 +112,6 @@ pub fn trap_return() -> ! {
             restore_va = in(reg) restore_va,
             in("a0") trap_cx_ptr,      // a0 = virt addr of Trap Context
             in("a1") user_satp,        // a1 = phy addr of usr page table
-            in("a3") id,
             options(noreturn)
         );
     }

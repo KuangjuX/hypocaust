@@ -43,7 +43,7 @@ GVA -> GPA -> HVA -> HPA
 - [x] Load guest kernel && Run guest kernel
 - [x] Trap and emulate of privileged instructions(CSR related and SFENCE>VMA)
 - [x] Shadow page tables
-- [ ] Synchronize guest page table & shadow page table
+- [x] Synchronize guest page table & shadow page table
 - [x] Foward Expections & Interrupts
 - [ ] Update PTE accessed and dirty bits
 - [ ] Timers
