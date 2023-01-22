@@ -67,12 +67,11 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_stval(stval::read());
     let stvec = state.get_stvec();
     ctx.sepc = stvec;
+    // hdebug!("stvec: {:#x}", stvec);
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     match guest.shadow_state.smode() {
         true => {},
-        false => {
-            hdebug!("sscratch: {:#x}", guest.shadow_state.get_sscratch());
-        }
+        false => {}
     }
     // panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
     // panic!()
@@ -112,6 +111,7 @@ pub fn ifault(ctx: &mut TrapContext) {
                         let id = inner.run_id;
                         let guest = &mut inner.kernels[id];
                         forward_exception(guest, ctx);
+                        return;
                     }
                 }
             }
