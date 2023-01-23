@@ -338,15 +338,6 @@ impl GuestKernel {
             let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
             shadow_pgt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
 
-            // 测试映射是否正确
-            // assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().readable(), true);
-            // assert_eq!(shadow_pgt.translate(0x80000.into()).unwrap().is_valid(), true);
-            // assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().readable(), true);
-            // assert_eq!(shadow_pgt.translate(0x80329.into()).unwrap().is_valid(), true);
-            // assert_eq!(shadow_pgt.translate(VirtPageNum(TRAMPOLINE >> 12)).unwrap().readable(), true);
-            // assert_eq!(shadow_pgt.translate(VirtPageNum(TRAP_CONTEXT >> 12)).unwrap().writable(), true);
-            // assert_eq!(shadow_pgt.translate(VirtPageNum::from(0x3fffffe)), None);
-
             // 构造 `rmap`
             let mut rmap = Rmap{ rmap: BTreeMap::new() };
             self.make_rmap(root_gpa, &mut rmap);
