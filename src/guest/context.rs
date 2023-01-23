@@ -1,4 +1,4 @@
-pub struct ShadowState {
+pub struct ControlRegisters {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
 
@@ -12,12 +12,9 @@ pub struct ShadowState {
     scause: usize,
     stval: usize,
     satp: usize,
-
-    /// 影子页表
-    pub shadow_page_tables: ShadowPageTables
 }
 
-impl ShadowState {
+impl ControlRegisters {
     pub const fn new() -> Self {
         Self {
             sstatus: 0,
@@ -29,39 +26,52 @@ impl ShadowState {
             stval: 0,
             satp: 0,
 
-            // smode: true,
+        }
+    }
+}
+
+pub struct ShadowState {
+    csrs: ControlRegisters,
+    /// 影子页表
+    pub shadow_page_tables: ShadowPageTables
+}
+
+impl ShadowState {
+    pub const fn new() -> Self {
+        Self {
+            csrs: ControlRegisters::new(),
             shadow_page_tables: ShadowPageTables::new()
         }
     }
 
-    pub fn get_sstatus(&self) -> usize { self.sstatus }
-    pub fn get_stvec(&self) -> usize { self.stvec }
-    pub fn get_sie(&self) -> usize { self.sie }
-    pub fn get_sscratch(&self) -> usize { self.sscratch }
-    pub fn get_sepc(&self) -> usize { self.sepc }
-    pub fn get_scause(&self) -> usize { self.scause }
-    pub fn get_stval(&self) -> usize { self.stval }
-    pub fn get_satp(&self) -> usize { self.satp }
+    pub fn get_sstatus(&self) -> usize { self.csrs.sstatus }
+    pub fn get_stvec(&self) -> usize { self.csrs.stvec }
+    pub fn get_sie(&self) -> usize { self.csrs.sie }
+    pub fn get_sscratch(&self) -> usize { self.csrs.sscratch }
+    pub fn get_sepc(&self) -> usize { self.csrs.sepc }
+    pub fn get_scause(&self) -> usize { self.csrs.scause }
+    pub fn get_stval(&self) -> usize { self.csrs.stval }
+    pub fn get_satp(&self) -> usize { self.csrs.satp }
 
-    pub fn write_sstatus(&mut self, val: usize) { self.sstatus  = val}
+    pub fn write_sstatus(&mut self, val: usize) { self.csrs.sstatus  = val}
     pub fn write_stvec(&mut self, val: usize) { 
-        self.stvec = val 
+        self.csrs.stvec = val 
     }
-    pub fn write_sie(&mut self, val: usize) { self.sie = val}
+    pub fn write_sie(&mut self, val: usize) { self.csrs.sie = val}
     pub fn write_sscratch(&mut self, val: usize) { 
         // hdebug!("sscratch: {:#x}", val);
-        self.sscratch = val 
+        self.csrs.sscratch = val 
     }
-    pub fn write_sepc(&mut self, val: usize) { self.sepc = val }
-    pub fn write_scause(&mut self, val: usize)  { self.scause = val }
-    pub fn write_stval(&mut self, val: usize) { self.stval  = val }
-    pub fn write_satp(&mut self, val: usize) { self.satp = val }
+    pub fn write_sepc(&mut self, val: usize) { self.csrs.sepc = val }
+    pub fn write_scause(&mut self, val: usize)  { self.csrs.scause = val }
+    pub fn write_stval(&mut self, val: usize) { self.csrs.stval  = val }
+    pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }
 
     pub fn smode(&self) -> bool { 
-        self.sstatus.get_bit(8)    
+        self.csrs.sstatus.get_bit(8)    
     } 
     // 是否开启分页
-    pub fn paged(&self) -> bool { self.satp != 0 }
+    pub fn paged(&self) -> bool { self.csrs.satp != 0 }
 
 
 }
