@@ -1,5 +1,6 @@
 # Hypocaust
-**Hypocaust** is a type-1 hypervisor run on RISC-V machine designed for final graduation project.
+**Hypocaust** is asn S-mode trap and emulate type-1 hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type. It can run on [RustSBI](https://github.com/rustsbi/rustsbi) currently.  
+
 ![](docs/images/hypocaust.png)
 
 ## Environment
