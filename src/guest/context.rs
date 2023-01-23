@@ -1,7 +1,6 @@
 pub struct ControlRegisters {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
-
     sstatus: usize,
     sie: usize,
     // sip: usize, -- checked dynamically on read
@@ -12,6 +11,8 @@ pub struct ControlRegisters {
     scause: usize,
     stval: usize,
     satp: usize,
+
+    mtime: usize
 }
 
 impl ControlRegisters {
@@ -25,7 +26,7 @@ impl ControlRegisters {
             scause: 0,
             stval: 0,
             satp: 0,
-
+            mtime: 0
         }
     }
 }
