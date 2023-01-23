@@ -44,7 +44,7 @@ pub fn pfault(ctx: &mut TrapContext) {
                         guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
                         // panic!()
                     },
-                    _ => panic!()
+                    _ => panic!("sepc: {:#x}, stval: {:#x}", ctx.sepc, stval)
                 }
             }
             // panic!();
@@ -67,14 +67,11 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_stval(stval::read());
     let stvec = state.get_stvec();
     ctx.sepc = stvec;
-    // hdebug!("stvec: {:#x}", stvec);
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     match guest.shadow_state.smode() {
         true => {},
         false => {}
     }
-    // panic!("stval: {:#x}, cause: {:?}", stval::read(), scause::read().cause());
-    // panic!()
 }
 
 /// 向 guest kernel 转发中断
@@ -105,7 +102,6 @@ pub fn ifault(ctx: &mut TrapContext) {
                         let c = ctx.x[10];
                         console_putchar(c);
                     },
-                    // _ => { panic!("[hypervisor] Error env call")}
                     _ => {
                         let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
                         let id = inner.run_id;
@@ -173,7 +169,7 @@ pub fn ifault(ctx: &mut TrapContext) {
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 if i.rs1() == 0 {
-
+                    unsafe{ core::arch::asm!("sfence.vma") };
                 }else{
                     panic!("[hypervisor] Unimplented!");
                 }
