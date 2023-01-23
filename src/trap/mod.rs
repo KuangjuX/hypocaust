@@ -75,7 +75,6 @@ pub fn trap_handler() -> ! {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
-            // hdebug!("Timer ticks......");
         },
         _ => {  
             panic!(
