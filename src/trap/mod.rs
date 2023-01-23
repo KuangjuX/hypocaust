@@ -50,9 +50,7 @@ fn set_user_trap_entry() {
 
 /// enable timer interrupt in sie CSR
 pub fn enable_timer_interrupt() {
-    unsafe {
-        sie::set_stimer();
-    }
+    unsafe { sie::set_stimer(); }
 }
 
 #[no_mangle]
@@ -77,10 +75,9 @@ pub fn trap_handler() -> ! {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             set_next_trigger();
-            // suspend_current_and_run_next();
-        }
-        _ => {
-            
+            // hdebug!("Timer ticks......");
+        },
+        _ => {  
             panic!(
                 "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
                 scause.cause(),
