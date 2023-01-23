@@ -235,29 +235,15 @@ impl GuestKernel {
     
     /// 验证需要映射的内存是否为客户页表的页表项，若为页表项，则将
     /// 权限位设置为不可写，以便在 Guest OS 修改页表项时陷入 VMM
-    pub fn is_guest_page_table(&self, mut vaddr: usize) -> bool {
+    pub fn is_guest_page_table(&self, vaddr: usize) -> bool {
         // 虚拟地址页对齐
-        vaddr = (vaddr >> 12) << 12;
-        let root = (self.shadow_state.get_satp() << 12) & 0x7f_ffff_ffff;
-        let root_vpn = VirtPageNum::from(root >> 12);
-        let mut queue = VecDeque::new();
-        let mut buffer = Vec::new();
-        queue.push_back(root_vpn); 
-        for _ in 0..3 {
-            while !queue.is_empty() {
-                let vpn = queue.pop_front().unwrap();
-                let ppn = PhysPageNum::from(self.gpa2hpa(vpn.0 << 12) >> 12);
-                let ptes = ppn.get_pte_array();
-                for pte in ptes {
-                    if pte.ppn().0 == (vaddr >> 12){ return true }
-                    if pte.is_valid() {
-                        buffer.push(VirtPageNum::from(pte.ppn().0))
-                    }
-                } 
+        let satp = self.shadow_state.get_satp();
+        if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(satp) {
+            let rmap = &spt.rmap;
+            if rmap.rmap.contains_key(&PhysPageNum::from(vaddr >> 12)) {
+                return true
             }
-            while !buffer.is_empty() {
-                queue.push_back(buffer.pop().unwrap());
-            }
+            return false
         }
         false
     }
@@ -302,7 +288,6 @@ impl GuestKernel {
                 let ptes = ppn.get_pte_array();
                 for (index, pte) in ptes.iter().enumerate() {
                     if pte.is_valid() {
-                        // hdebug!("ppn: {:?}, vaddr: {:#x}", pte.ppn(), (vpn.0 << 12) + index * size_of::<PageTableEntry>());
                         if !rmap.rmap.contains_key(&pte.ppn()) {
                             rmap.rmap.insert(pte.ppn(), (vpn.0 << 12) + index * size_of::<PageTableEntry>());
                             buffer.push(VirtPageNum::from(pte.ppn().0))
@@ -366,11 +351,10 @@ impl GuestKernel {
             let mut rmap = Rmap{ rmap: BTreeMap::new() };
             self.make_rmap(root_gpa, &mut rmap);
 
-            // hdebug!("0x3fffffe -> {:#x}", shadow_pgt.translate(VirtPageNum::from(0x3fffffe)).unwrap().ppn().0);
             // 修改 `shadow page table`
+            hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, shadow_pgt.token());
             let shadow_page_table = ShadowPageTable::new(satp, shadow_pgt, rmap);
             self.shadow_state.shadow_page_tables.push(shadow_page_table);
-            hdebug!("Success to construct shadow page table......");
         }
     }
 
