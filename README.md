@@ -34,9 +34,7 @@
 | 0x80000000 - 0x87FFFFFF | 0x80000000 - 0x87FFFFFF | 0x90000000 - 0x97FFFFFF | Guest Kernel 2|
 | 0x80000000 - 0x87FFFFFF | 0x80000000 - 0x87FFFFFF | 0x98000000 - 0x9FFFFFFF | Guest Kernel 3 |
 
-
-
-GVA -> GPA -> HVA -> HPA
+![](docs/images/layout.png)
 
 ## Supported Platforms
 - QEMU virt machine type

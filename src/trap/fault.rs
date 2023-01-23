@@ -42,7 +42,6 @@ pub fn pfault(ctx: &mut TrapContext) {
                             core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
                         }
                         guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
-                        // panic!()
                     },
                     _ => panic!("sepc: {:#x}, stval: {:#x}", ctx.sepc, stval)
                 }

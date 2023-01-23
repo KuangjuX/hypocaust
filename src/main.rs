@@ -61,26 +61,30 @@ fn clear_bss() {
 
 #[no_mangle]
 pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
-    clear_bss();
-    println!("[hypervisor] Hello Hypocaust");
-    println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
-    // 初始化堆及帧分配器
-    mm::heap_init();
-    let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
-    // 初始化虚拟内存
-    mm::vm_init(&guest_kernel_memory);
-    trap::init();
-    mm::remap_test();
-    mm::guest_kernel_test();
-    // 开启时钟中断
-    trap::enable_timer_interrupt();
-    timer::set_next_trigger();
-    // 创建用户态的 guest kernel 内存空间
-    let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-    let guest_kernel = GuestKernel::new(user_guest_kernel_memory, 0);
-    GUEST_KERNEL_MANAGER.push(guest_kernel);
-    // 开始运行 guest kernel
-    run_guest_kernel();
+    if hart_id == 0{
+        clear_bss();
+        println!("[hypervisor] Hello Hypocaust");
+        println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
+        // 初始化堆及帧分配器
+        mm::heap_init();
+        let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
+        // 初始化虚拟内存
+        mm::vm_init(&guest_kernel_memory);
+        trap::init();
+        mm::remap_test();
+        mm::guest_kernel_test();
+        // 开启时钟中断
+        trap::enable_timer_interrupt();
+        timer::set_next_trigger();
+        // 创建用户态的 guest kernel 内存空间
+        let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
+        let guest_kernel = GuestKernel::new(user_guest_kernel_memory, 0);
+        GUEST_KERNEL_MANAGER.push(guest_kernel);
+        // 开始运行 guest kernel
+        run_guest_kernel();
+    }else{
+        unreachable!()
+    }
 }
 
 
