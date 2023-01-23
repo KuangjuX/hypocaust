@@ -18,15 +18,8 @@ pub fn pfault(ctx: &mut TrapContext) {
         if guest.is_guest_page_table(stval) {
             // 检测到 Guest OS 修改页表
             // hdebug!("Guest OS try to write page table, sepc: {:#x}, stval: {:#x}", ctx.sepc, stval);
-            let sepc = guest.gpa2hpa(ctx.sepc);
-            let i1 = unsafe{ core::ptr::read(sepc as *const u16) };
-            let len = riscv_decode::instruction_length(i1);
-            let inst = match len {
-                2 => i1 as u32,
-                4 => unsafe{ core::ptr::read(sepc as *const u32) },
-                _ => unreachable!()
-            };
-            if let Ok(inst) = riscv_decode::decode(inst) {
+            let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
+            if let Some(inst) = inst {
                 match inst {
                     riscv_decode::Instruction::Sd(i) => {
                         let rs1 = i.rs1() as usize;
@@ -83,16 +76,9 @@ pub fn ifault(ctx: &mut TrapContext) {
     let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let id = inner.run_id;
     let guest = &inner.kernels[id];
-    let vhepc = guest.translate_guest_vaddr(ctx.sepc).unwrap();
+    let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     drop(inner);
-    let i1 = unsafe{ core::ptr::read(vhepc as *const u16) };
-    let len = riscv_decode::instruction_length(i1);
-    let inst = match len {
-        2 => i1 as u32,
-        4 => unsafe{ core::ptr::read(vhepc as *const u32) },
-        _ => unreachable!()
-    };
-    if let Ok(inst) = riscv_decode::decode(inst) {
+    if let Some(inst) = inst {
         match inst {
             riscv_decode::Instruction::Ecall => {
                 let x17 = ctx.x[17];
@@ -183,4 +169,17 @@ pub fn ifault(ctx: &mut TrapContext) {
         forward_exception(guest, ctx) 
     }
     ctx.sepc += len;
+}
+
+/// decode instruction from Guest OS address
+pub fn decode_instruction_at_address(guest: &GuestKernel, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
+    let paddr = guest.translate_guest_vaddr(addr).unwrap();
+    let i1 = unsafe{ core::ptr::read(paddr as *const u16) };
+    let len = riscv_decode::instruction_length(i1);
+    let inst = match len {
+        2 => i1 as u32,
+        4 => unsafe{ core::ptr::read(paddr as *const u32) },
+        _ => unreachable!()
+    };
+    (len, riscv_decode::decode(inst).ok())
 }
