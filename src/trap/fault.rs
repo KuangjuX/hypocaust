@@ -183,8 +183,7 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_scause(scause::read().code());
     state.write_sepc(ctx.sepc);
     state.write_stval(stval::read());
-    let stvec = state.get_stvec();
-    ctx.sepc = stvec;
+    ctx.sepc = state.get_stvec();
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     match guest.shadow_state.smode() {
         true => {},
@@ -209,7 +208,6 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
         state.interrupt = false;
     }
     state.write_sepc(ctx.sepc);
-    let stvec = state.get_stvec();
-    ctx.sepc = stvec;
+    ctx.sepc = state.get_stvec();
 }
 
