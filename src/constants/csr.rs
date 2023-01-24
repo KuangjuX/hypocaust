@@ -232,3 +232,15 @@ pub const mhpmcounter28h: usize = 0xb9c;
 pub const mhpmcounter29h: usize = 0xb9d;
 pub const mhpmcounter30h: usize = 0xb9e;
 pub const mhpmcounter31h: usize = 0xb9f;
+
+pub mod sie {
+    pub const SSIE: usize = 1 << 1;
+    pub const STIE: usize = 1 << 5;
+    pub const SEIE: usize = 1 << 9;
+}
+
+pub mod sip {
+    pub const SSIP: usize = 1 << 1;
+    pub const STIP: usize = 1 << 5;
+    pub const SEIP: usize = 1 << 9;
+}

@@ -1,9 +1,10 @@
 use riscv::register::{stval, scause};
 
 use super::TrapContext;
+use crate::constants::csr::sie::STIE;
+use crate::constants::csr::sip::{STIP, SEIP, SSIP};
 use crate::mm::PageTableEntry;
-// use crate::constants::layout::PAGE_SIZE;
-use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR };
+use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
 
@@ -15,6 +16,10 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
             riscv_decode::Instruction::Ecall => {
                 let x17 = ctx.x[17];
                 match x17  {
+                    SBI_SET_TIMER => {
+                        let stimer = ctx.x[10];
+                        guest.shadow_state.write_mtimecmp(stimer);
+                    }
                     SBI_CONSOLE_PUTCHAR => {
                         let c = ctx.x[10];
                         console_putchar(c);
@@ -152,14 +157,28 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 /// 时钟中断处理函数
-pub fn timer_handler(_guest: &mut GuestKernel, _ctx: &TrapContext) {
+pub fn timer_handler(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let time = get_time();
-    let mut _next = time + get_default_timer();
+    let mut next = time + get_default_timer();
+
+    if guest.shadow_state.get_sie() & STIE != 0 {
+        if guest.shadow_state.get_mtimecmp() <= time {
+            // 表明此时 Guest OS 发生中断
+            guest.shadow_state.interrupt = true;
+            // 设置 sip 寄存器
+            guest.shadow_state.csrs.sip |= STIP;
+        }else{
+            // 未发生中断，设置下次中断
+            next = next.min(guest.shadow_state.get_mtimecmp())
+        }
+    }
+    // 设置下次中断
+    set_timer(next);
+    maybe_forward_interrupt(guest, ctx);
 }
 
 /// 向 guest kernel 转发异常
 pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
-    // hdebug!("forward expection");
     let state = &mut guest.shadow_state;
     state.write_scause(scause::read().code());
     state.write_sepc(ctx.sepc);
@@ -173,8 +192,24 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     }
 }
 
-/// 向 guest kernel 转发中断
-pub fn maybe_forward_interrupt(_ctx: &mut TrapContext) {
-    
+/// 检测客户端是否发生中断，若有则进行转发
+pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+    // 没有发生中断，返回
+    if !guest.shadow_state.interrupt{ return }
+    let state = &mut guest.shadow_state;
+    if state.get_sie() & state.csrs.sip != 0 {
+        // 如果开启中断且有中断正在等待
+        let mut cause: usize = if state.csrs.sip & SEIP != 0 { 9 }
+        else if state.csrs.sip & STIP != 0 { 5 }
+        else if state.csrs.sip & SSIP != 0 { 1 }
+        else{ unreachable!() };
+        cause = (1 << 63) | cause;
+        state.write_scause(cause);
+    }else{
+        state.interrupt = false;
+    }
+    state.write_sepc(ctx.sepc);
+    let stvec = state.get_stvec();
+    ctx.sepc = stvec;
 }
 
