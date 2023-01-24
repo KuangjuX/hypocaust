@@ -1,9 +1,10 @@
+use riscv::addr::BitField;
 use riscv::register::{stval, scause};
 
 use super::TrapContext;
-use crate::constants::csr::sie::STIE;
-use crate::constants::csr::sip::{STIP, SEIP, SSIP};
-use crate::constants::csr::status::STATUS_SIE;
+use crate::constants::csr::sie::{STIE, SSIE_BIT};
+use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
+use crate::constants::csr::status::{STATUS_SIE, STATUS_SPP_BIT};
 use crate::mm::PageTableEntry;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER };
 use crate::guest::GuestKernel;
@@ -15,12 +16,12 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     if let Some(inst) = inst {
         match inst {
             riscv_decode::Instruction::Ecall => {
-                let x17 = ctx.x[17];
-                match x17  {
+                match ctx.x[17]  {
                     SBI_SET_TIMER => {
-                        // hdebug!("guest kernel set timer");
-                        let stimer = ctx.x[10];
-                        guest.shadow_state.write_mtimecmp(stimer);
+                        let stime = ctx.x[10];
+                        guest.shadow_state.write_mtimecmp(stime);
+                        set_timer(stime);
+                        guest.shadow_state.csrs.sip.set_bit(STIP_BIT, false);
                     }
                     SBI_CONSOLE_PUTCHAR => {
                         let c = ctx.x[10];
@@ -87,6 +88,10 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
             riscv_decode::Instruction::Sret => {
                 guest.shadow_state.pop_sie();
                 ctx.sepc = guest.read_shadow_csr(crate::constants::csr::sepc);
+                guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
+                if !guest.shadow_state.smode() {
+                    guest.shadow_state.interrupt = true;
+                }
                 return;
             }
             riscv_decode::Instruction::SfenceVma(i) => {
@@ -163,23 +168,22 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 pub fn timer_handler(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let time = get_time();
     let mut next = time + get_default_timer();
-
     if guest.shadow_state.get_sie() & STIE != 0 {
         if guest.shadow_state.get_mtimecmp() <= time {
             // hdebug!("guest kernel timer interrupt");
             // 表明此时 Guest OS 发生中断
             guest.shadow_state.interrupt = true;
             // 设置 sip 寄存器
-            guest.shadow_state.csrs.sip |= STIP;
+            guest.shadow_state.csrs.sip.set_bit(STIP_BIT, true);
         }else{
             // 未发生中断，设置下次中断
             next = next.min(guest.shadow_state.get_mtimecmp())
         }
     }
-    // 设置下次中断
-    set_timer(next);
     // 可能转发中断
     maybe_forward_interrupt(guest, ctx);
+    // 设置下次中断
+    set_timer(next);
 }
 
 /// 向 guest kernel 转发异常
@@ -203,9 +207,9 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     let state = &mut guest.shadow_state;
     if (!state.smode() || state.get_sstatus() & STATUS_SIE != 0) && (state.get_sie() & state.csrs.sip != 0) {
         // 如果开启中断且有中断正在等待
-        let mut cause: usize = if state.csrs.sip & SEIP != 0 { 9 }
-        else if state.csrs.sip & STIP != 0 { 5 }
-        else if state.csrs.sip & SSIP != 0 { 1 }
+        let mut cause: usize = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
+        else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
+        else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
         else{ unreachable!() };
         cause = (1 << 63) | cause;
         state.write_scause(cause);

@@ -240,6 +240,10 @@ pub mod sie {
     pub const STIE: usize = 1 << 5;
     /// external interrupts enable
     pub const SEIE: usize = 1 << 9;
+
+    pub const SSIE_BIT: usize = 1;
+    pub const STIE_BIT: usize = 5;
+    pub const SEIE_BIT: usize = 9;
 }
 
 pub mod sip {
@@ -249,6 +253,10 @@ pub mod sip {
     pub const STIP: usize = 1 << 5;
     /// external interrupts pending
     pub const SEIP: usize = 1 << 9;
+
+    pub const SSIP_BIT: usize = 1;
+    pub const STIP_BIT: usize = 5;
+    pub const SEIP_BIT: usize = 9;
 }
 
 pub mod status {
@@ -267,4 +275,10 @@ pub mod status {
     pub const STATUS_SUM: usize = 1 << 18;
     pub const STATUS_MXR: usize = 1 << 19;
     pub const STATUS_SD: usize = 1 << 63;
+
+    pub const STATUS_SIE_BIT: usize = 1;
+
+    pub const STATUS_SPIE_BIT: usize = 5;
+
+    pub const STATUS_SPP_BIT: usize = 8;
 }
