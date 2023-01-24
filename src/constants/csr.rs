@@ -234,13 +234,37 @@ pub const mhpmcounter30h: usize = 0xb9e;
 pub const mhpmcounter31h: usize = 0xb9f;
 
 pub mod sie {
+    /// software interrupts enable
     pub const SSIE: usize = 1 << 1;
+    /// timer interrupts enable
     pub const STIE: usize = 1 << 5;
+    /// external interrupts enable
     pub const SEIE: usize = 1 << 9;
 }
 
 pub mod sip {
+    /// software interrupts pending
     pub const SSIP: usize = 1 << 1;
+    /// timer interrupts pending
     pub const STIP: usize = 1 << 5;
+    /// external interrupts pending
     pub const SEIP: usize = 1 << 9;
+}
+
+pub mod status {
+    pub const STATUS_UIE: usize = 1 << 0;
+    /// enable or disable all interupts in supervisor mode.
+    pub const STATUS_SIE: usize = 1 << 1;
+    pub const STATUS_UPIE: usize = 1 << 4;
+    /// indicate whether supervisor interrupts were enabled prior to trapping into 
+    /// supervisor mode. When a trap is taken into supervisor mode, SPIE is set to SIE,
+    /// and SIE is set to 0. When an SRET instruction is executed, SIE is set to SPIE, 
+    /// then SPIE is set to 1.
+    pub const STATUS_SPIE: usize = 1 << 5;
+    pub const STATUS_SPP: usize = 1 << 8;
+    pub const STATUS_FS: usize = 3 << 13;
+    pub const STATUS_XS: usize = 3 << 15;
+    pub const STATUS_SUM: usize = 1 << 18;
+    pub const STATUS_MXR: usize = 1 << 19;
+    pub const STATUS_SD: usize = 1 << 63;
 }

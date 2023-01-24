@@ -71,6 +71,24 @@ impl ShadowState {
     pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }
     pub fn write_mtimecmp(&mut self, val: usize) { self.csrs.mtimecmp = val }
 
+    pub fn push_sie(&mut self) {
+        let sie = (self.csrs.sstatus & STATUS_SIE) != 0;
+        if sie{ self.csrs.sstatus |= STATUS_SPIE }
+        else { self.csrs.sstatus &= !STATUS_SPIE }
+        self.csrs.sstatus &= !STATUS_SIE;
+    }
+
+    pub fn pop_sie(&mut self) {
+        let sie = (self.csrs.sstatus & STATUS_SIE) != 0;
+        let spie = (self.csrs.sstatus & STATUS_SPIE) != 0;
+        if !sie && spie {
+            self.interrupt = true;
+        }
+        if spie{ self.csrs.sstatus |= STATUS_SIE }
+        else { self.csrs.sstatus &= !STATUS_SIE }
+        self.csrs.sstatus &= STATUS_SPIE;
+    }
+
     pub fn smode(&self) -> bool { 
         self.csrs.sstatus.get_bit(8)    
     } 
@@ -82,7 +100,7 @@ impl ShadowState {
 
 use riscv::addr::BitField;
 
-use crate::trap::trap_return;
+use crate::{trap::trap_return, constants::csr::status::{STATUS_SIE, STATUS_SPIE}};
 
 use super::pmap::ShadowPageTables;
 

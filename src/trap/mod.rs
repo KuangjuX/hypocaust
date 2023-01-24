@@ -64,7 +64,6 @@ pub fn trap_handler() -> ! {
     let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
     let id = inner.run_id;
     let guest = &mut inner.kernels[id];
-    // hdebug!("scause: {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             ifault(guest, ctx);
@@ -101,9 +100,7 @@ pub fn trap_handler() -> ! {
 pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
-    // hdebug!("trap return");
     let user_satp = current_user_token();
-    // hdebug!("current user token");
     extern "C" {
         fn __alltraps();
         fn __restore();
