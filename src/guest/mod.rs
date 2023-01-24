@@ -7,6 +7,7 @@ use crate::constants::csr;
 mod switch;
 mod context;
 mod pmap;
+mod virtirq;
 
 use context::TaskContext;
 use alloc::vec::Vec;
@@ -16,6 +17,7 @@ use crate::sync::UPSafeCell;
 
 use self::context::ShadowState;
 use self::pmap::PageTableRoot;
+
 
 
 lazy_static! {
@@ -57,6 +59,7 @@ pub fn run_guest_kernel() -> ! {
     let task_cx_ptr = &guest_kernel.task_cx as *const TaskContext;
     drop(inner);
     let mut _unused = TaskContext::zero_init();
+    hdebug!("run guest kernel......");
     // before this, we should drop local variables that must be dropped manually
     unsafe {
         __switch(&mut _unused as *mut _, task_cx_ptr);
@@ -88,73 +91,7 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 }
 
 
-/// GPA -> HVA
-pub fn translate_guest_paddr(paddr: usize) -> Option<usize> {
-    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let kernel = &inner.kernels[inner.run_id];
-    kernel.translate_guest_paddr(paddr)
-}
 
-pub fn translate_guest_vaddr(vaddr: usize) -> Option<usize> {
-    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let kernel = &inner.kernels[inner.run_id];
-    kernel.translate_guest_vaddr(vaddr)
-}
-
-pub fn get_shadow_csr(csr: usize) -> usize {
-    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let shadow_state = &mut inner.kernels[id].shadow_state;
-    match csr {
-        csr::sstatus => { shadow_state.get_sstatus() }
-        csr::stvec => { shadow_state.get_stvec() }
-        csr::sie => { shadow_state.get_sie() }
-        csr::sscratch => { shadow_state.get_sscratch() }
-        csr::sepc => { shadow_state.get_sepc() }
-        csr::scause => { shadow_state.get_scause() }
-        csr::stval => { shadow_state.get_stval() }
-        csr::satp => { shadow_state.get_satp() }
-        _ => { panic!("[hypervisor] Unrecognized") }
-    }
-}
-
-pub fn write_shadow_csr(csr: usize, val: usize) {
-    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let shadow_state = &mut inner.kernels[id].shadow_state;
-    match csr {
-        csr::sstatus => { shadow_state.write_sstatus(val) }
-        csr::stvec => { shadow_state.write_stvec(val) }
-        csr::sie => { shadow_state.write_sie(val) }
-        csr::sscratch => { shadow_state.write_sscratch(val) }
-        csr::sepc => { shadow_state.write_sepc(val);}
-        csr::scause => { shadow_state.write_scause(val) }
-        csr::stval => { shadow_state.write_stval(val) }
-        csr::satp => { shadow_state.write_satp(val) }
-        _ => { panic!("[hypervisor] Unrecognized") }
-    }
-}
-
-/// STEP:
-/// 1. VMM intercepts guest OS setting the virtual satp
-/// 2. VMM iterates over the guest page table, constructs a corresponding shadow page table
-/// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
-/// 4. Finally, VMM sets the real satp to point to the shadow page table
-pub fn satp_handler(satp: usize) {
-    match (satp >> 60) & 0xf {
-        0 => { write_shadow_csr(csr::satp, satp)}
-        8 => {
-            // 获取 guest kernel 
-            let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-            let id = inner.run_id;
-            let guest = &mut inner.kernels[id];
-            guest.make_shadow_page_table(satp);
-            drop(inner);
-            write_shadow_csr(csr::satp, satp);
-        }
-        _ => { panic!("Atttempted to install page table with unsupported mode") }
-    } 
-}
 
 /// Guest Kernel 结构体
 pub struct GuestKernel {
@@ -227,6 +164,53 @@ impl GuestKernel {
             PageTableRoot::UVA
         }else {
             PageTableRoot::GVA
+        }
+    }
+
+    /// STEP:
+    /// 1. VMM intercepts guest OS setting the virtual satp
+    /// 2. VMM iterates over the guest page table, constructs a corresponding shadow page table
+    /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
+    /// 4. Finally, VMM sets the real satp to point to the shadow page table
+    pub fn satp_handler(&mut self, satp: usize) {
+        match (satp >> 60) & 0xf {
+            0 => { self.write_shadow_csr(csr::satp, satp)}
+            8 => {
+                // 获取 guest kernel 
+                self.make_shadow_page_table(satp);
+                self.write_shadow_csr(csr::satp, satp);
+            }
+            _ => { panic!("Atttempted to install page table with unsupported mode") }
+        } 
+    }
+
+    pub fn read_shadow_csr(&self, csr: usize) -> usize {
+        let shadow_state = &self.shadow_state;
+        match csr {
+            csr::sstatus => { shadow_state.get_sstatus() }
+            csr::stvec => { shadow_state.get_stvec() }
+            csr::sie => { shadow_state.get_sie() }
+            csr::sscratch => { shadow_state.get_sscratch() }
+            csr::sepc => { shadow_state.get_sepc() }
+            csr::scause => { shadow_state.get_scause() }
+            csr::stval => { shadow_state.get_stval() }
+            csr::satp => { shadow_state.get_satp() }
+            _ => { panic!("[hypervisor] Unrecognized") }
+        }
+    }
+
+    pub fn write_shadow_csr(&mut self, csr: usize, val: usize) {
+        let shadow_state = &mut self.shadow_state;
+        match csr {
+            csr::sstatus => { shadow_state.write_sstatus(val) }
+            csr::stvec => { shadow_state.write_stvec(val) }
+            csr::sie => { shadow_state.write_sie(val) }
+            csr::sscratch => { shadow_state.write_sscratch(val) }
+            csr::sepc => { shadow_state.write_sepc(val);}
+            csr::scause => { shadow_state.write_scause(val) }
+            csr::stval => { shadow_state.write_stval(val) }
+            csr::satp => { shadow_state.write_satp(val) }
+            _ => { panic!("[hypervisor] Unrecognized") }
         }
     }
     

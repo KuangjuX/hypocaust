@@ -13,6 +13,7 @@ bitflags = "1.2.1"
 xmas-elf = "0.7.0"
 riscv-decode = { path = "riscv-decode" }
 sbi-rt = "0.0.2"
+spin = "0.9.4"
 
 [features]
 embed_guest_kernel = []

@@ -15,11 +15,11 @@ mod context;
 mod fault;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::{current_user_token, current_trap_cx};
+use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
 // use crate::task::{
 //     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
 // };
-use crate::timer::set_next_trigger;
+
 use core::arch::{asm, global_asm};
 use riscv::register::{
     mtvec::TrapMode,
@@ -27,7 +27,7 @@ use riscv::register::{
     sie, stval, stvec, sepc
 };
 pub use context::TrapContext;
-use self::fault::{pfault, ifault};
+use self::fault::{pfault, ifault, timer_handler};
 
 global_asm!(include_str!("trap.S"));
 
@@ -60,21 +60,26 @@ pub fn trap_handler() -> ! {
     let ctx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
+    // get guest kernel
+    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
+    let id = inner.run_id;
+    let guest = &mut inner.kernels[id];
+    // hdebug!("scause: {:?}", scause.cause());
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
-            ifault(ctx);
+            ifault(guest, ctx);
         }
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            pfault(ctx);
+            pfault(guest, ctx);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
-            ifault(ctx);
+            ifault(guest, ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            set_next_trigger();
+            timer_handler(guest, ctx);
         },
         _ => {  
             panic!(
@@ -85,6 +90,7 @@ pub fn trap_handler() -> ! {
             );
         }
     }
+    drop(inner);
     trap_return();
 }
 
@@ -95,7 +101,9 @@ pub fn trap_handler() -> ! {
 pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
+    // hdebug!("trap return");
     let user_satp = current_user_token();
+    // hdebug!("current user token");
     extern "C" {
         fn __alltraps();
         fn __restore();
