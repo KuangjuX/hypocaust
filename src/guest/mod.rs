@@ -172,8 +172,9 @@ impl GuestKernel {
     /// 2. VMM iterates over the guest page table, constructs a corresponding shadow page table
     /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
     /// 4. Finally, VMM sets the real satp to point to the shadow page table
-    pub fn satp_handler(&mut self, satp: usize) {
-        hdebug!("write satp: {:#x}", satp);
+    pub fn satp_handler(&mut self, satp: usize, sepc: usize) {
+        // hdebug!("write satp -> {:#x}", satp);
+        if satp == 0{ panic!("sepc -> {:#x}", sepc); }
         match (satp >> 60) & 0xf {
             0 => { self.write_shadow_csr(csr::satp, satp)}
             8 => {

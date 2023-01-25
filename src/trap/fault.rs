@@ -5,6 +5,7 @@ use super::TrapContext;
 use crate::constants::csr::sie::{STIE, SSIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
+use crate::constants::layout::{GUEST_TRAMPOLINE, PAGE_SIZE};
 use crate::mm::PageTableEntry;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER };
 use crate::guest::GuestKernel;
@@ -59,7 +60,7 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                 // 向 Shadow CSR 写入
                 let val = ctx.x[i.rs1() as usize];
                 match i.csr() as usize {
-                    crate::constants::csr::satp => { guest.satp_handler(val) },
+                    crate::constants::csr::satp => { guest.satp_handler(val, ctx.sepc) },
                     _ => { guest.write_shadow_csr(i.csr() as usize, val); }
                 }
                 ctx.x[i.rd() as usize] = prev;
@@ -125,10 +126,10 @@ pub fn decode_instruction_at_address(guest: &GuestKernel, addr: usize) -> (usize
 
 
 /// 处理地址错误问题
-pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext, satp: usize) {
     // 获取地址错信息
     let stval = stval::read();
-    if let Some(vhaddr) = guest.translate_valid_guest_vaddr(stval) {
+    if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
         // 处理地址错误
         if guest.is_guest_page_table(stval) {
             // 检测到 Guest OS 修改页表
@@ -157,7 +158,7 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
             ctx.sepc += len;
             return;
         }
-        panic!("stval: {:#x}, vhaddr: {:#x}, sepc: {:#x}, cause: {:?}", stval, vhaddr, ctx.sepc, scause::read().cause());
+        panic!("satp -> {:#x} stval -> {:#x}  sepc -> {:#x} cause -> {:?} sscratch -> {:?}", satp, stval, ctx.sepc, scause::read().cause(), guest.shadow_state.get_sscratch());
     }else{
         // 转发到 Guest OS 处理
         forward_exception(guest, ctx)
@@ -200,7 +201,7 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 /// 检测客户端是否发生中断，若有则进行转发
 pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 没有发生中断，返回
-    if !guest.shadow_state.interrupt{ return }
+    if !guest.shadow_state.interrupt || in_trap(ctx.sepc) { return }
     let state = &mut guest.shadow_state;
     if (!state.smode() || state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
         hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
@@ -220,18 +221,7 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     }
 }
 
-// pub fn forward_interrupt(state: &mut crate::guest::ShadowState, ctx: &mut TrapContext) {
-//     hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
-//     // 如果开启中断且有中断正在等待
-//     let mut cause: usize = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
-//     else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
-//     else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
-//     else{ unreachable!() };
-//     cause = (1 << 63) | cause;
-//     state.write_scause(cause);
-//     state.write_stval(0);
-//     state.write_sepc(ctx.sepc);
-//     state.push_sie();
-//     ctx.sepc = state.get_stvec();
-// }
+pub fn in_trap(addr: usize) -> bool {
+    addr >= GUEST_TRAMPOLINE || addr <= GUEST_TRAMPOLINE + PAGE_SIZE
+}
 

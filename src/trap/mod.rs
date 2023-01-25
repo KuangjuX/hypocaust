@@ -60,7 +60,7 @@ pub fn disable_timer_interrupt() {
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler(satp: usize) -> ! {
-    hdebug!("trap handler: satp -> {:#x}", satp);
+    // hdebug!("trap handler: satp -> {:#x}", satp);
     set_kernel_trap_entry();
     // disable_timer_interrupt();
     let ctx = current_trap_cx();
@@ -78,22 +78,24 @@ pub fn trap_handler(satp: usize) -> ! {
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            pfault(guest, ctx);
+            pfault(guest, ctx, satp);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             ifault(guest, ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
+            // hdebug!("timer interrupt pc -> {:#x}", ctx.sepc);
             timer_handler(guest);
             // 可能转发中断
             maybe_forward_interrupt(guest, ctx);
         },
         _ => {  
             panic!(
-                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
+                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}, satp: {:#x}!",
                 scause.cause(),
                 stval,
                 ctx.sepc,
+                satp
             );
         }
     }
