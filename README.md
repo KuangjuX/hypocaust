@@ -46,7 +46,7 @@
 - [x] Synchronize guest page table & shadow page table
 - [x] Foward Expections & Interrupts
 - [ ] Update PTE accessed and dirty bits
-- [ ] Timers
+- [x] Timers
 - [ ] Expose and/or emulate peripherals
 - [ ] passthrough virtio block and networkd devices
 - [ ] multicore supported

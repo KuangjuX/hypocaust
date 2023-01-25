@@ -16,9 +16,7 @@ mod fault;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
-// use crate::task::{
-//     current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next,
-// };
+
 
 use core::arch::{asm, global_asm};
 use riscv::register::{
@@ -59,10 +57,8 @@ pub fn disable_timer_interrupt() {
 
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
-pub fn trap_handler(satp: usize) -> ! {
-    // hdebug!("trap handler: satp -> {:#x}", satp);
+pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
-    // disable_timer_interrupt();
     let ctx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
@@ -78,24 +74,22 @@ pub fn trap_handler(satp: usize) -> ! {
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
-            pfault(guest, ctx, satp);
+            pfault(guest, ctx);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             ifault(guest, ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            // hdebug!("timer interrupt pc -> {:#x}", ctx.sepc);
             timer_handler(guest);
             // 可能转发中断
             maybe_forward_interrupt(guest, ctx);
         },
         _ => {  
             panic!(
-                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}, satp: {:#x}!",
+                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
                 scause.cause(),
                 stval,
-                ctx.sepc,
-                satp
+                ctx.sepc
             );
         }
     }

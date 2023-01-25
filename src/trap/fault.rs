@@ -126,7 +126,7 @@ pub fn decode_instruction_at_address(guest: &GuestKernel, addr: usize) -> (usize
 
 
 /// 处理地址错误问题
-pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext, satp: usize) {
+pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 获取地址错信息
     let stval = stval::read();
     if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
@@ -158,7 +158,7 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext, satp: usize) {
             ctx.sepc += len;
             return;
         }
-        panic!("satp -> {:#x} stval -> {:#x}  sepc -> {:#x} cause -> {:?} sscratch -> {:?}", satp, stval, ctx.sepc, scause::read().cause(), guest.shadow_state.get_sscratch());
+        panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
     }else{
         // 转发到 Guest OS 处理
         forward_exception(guest, ctx)
@@ -190,6 +190,8 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     state.write_scause(scause::read().code());
     state.write_sepc(ctx.sepc);
     state.write_stval(stval::read());
+    // 设置 sstatus 指向 S mode
+    state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
     ctx.sepc = state.get_stvec();
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     match guest.shadow_state.smode() {
@@ -201,10 +203,10 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 /// 检测客户端是否发生中断，若有则进行转发
 pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 没有发生中断，返回
-    if !guest.shadow_state.interrupt || in_trap(ctx.sepc) { return }
+    if !guest.shadow_state.interrupt  { return }
     let state = &mut guest.shadow_state;
-    if (!state.smode() || state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
-        hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
+    if (!state.smode() && state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
+        // hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
         // 如果开启中断且有中断正在等待
         let mut cause: usize = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
         else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
@@ -215,13 +217,12 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
         state.write_stval(0);
         state.write_sepc(ctx.sepc);
         state.push_sie();
+        // 设置 sstatus 指向 S mode
+        state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
         ctx.sepc = state.get_stvec();
     }else{
         state.interrupt = false;
     }
 }
 
-pub fn in_trap(addr: usize) -> bool {
-    (addr >= GUEST_TRAMPOLINE && addr <= GUEST_TRAMPOLINE + PAGE_SIZE) || (addr >= 0x8000_0000 && addr <= 0x8800_0000)
-}
 
