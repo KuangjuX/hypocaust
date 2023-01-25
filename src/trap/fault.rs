@@ -222,6 +222,6 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 pub fn in_trap(addr: usize) -> bool {
-    addr >= GUEST_TRAMPOLINE || addr <= GUEST_TRAMPOLINE + PAGE_SIZE
+    (addr >= GUEST_TRAMPOLINE && addr <= GUEST_TRAMPOLINE + PAGE_SIZE) || (addr >= 0x8000_0000 && addr <= 0x8800_0000)
 }
 
