@@ -27,7 +27,7 @@ use riscv::register::{
     sie, stval, stvec, sepc
 };
 pub use context::TrapContext;
-use self::fault::{pfault, ifault, timer_handler};
+use self::fault::{pfault, ifault, timer_handler, maybe_forward_interrupt};
 
 global_asm!(include_str!("trap.S"));
 
@@ -53,10 +53,16 @@ pub fn enable_timer_interrupt() {
     unsafe { sie::set_stimer(); }
 }
 
+pub fn disable_timer_interrupt() {
+    unsafe{ sie::clear_stimer(); }
+}
+
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
-pub fn trap_handler() -> ! {
+pub fn trap_handler(satp: usize) -> ! {
+    hdebug!("trap handler: satp -> {:#x}", satp);
     set_kernel_trap_entry();
+    // disable_timer_interrupt();
     let ctx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
@@ -78,14 +84,16 @@ pub fn trap_handler() -> ! {
             ifault(guest, ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            timer_handler(guest, ctx);
+            timer_handler(guest);
+            // 可能转发中断
+            maybe_forward_interrupt(guest, ctx);
         },
         _ => {  
             panic!(
                 "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
                 scause.cause(),
                 stval,
-                ctx.sepc
+                ctx.sepc,
             );
         }
     }

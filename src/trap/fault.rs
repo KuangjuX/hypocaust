@@ -4,7 +4,7 @@ use riscv::register::{stval, scause};
 use super::TrapContext;
 use crate::constants::csr::sie::{STIE, SSIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
-use crate::constants::csr::status::{STATUS_SIE, STATUS_SPP_BIT};
+use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::mm::PageTableEntry;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER };
 use crate::guest::GuestKernel;
@@ -165,12 +165,11 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 /// 时钟中断处理函数
-pub fn timer_handler(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn timer_handler(guest: &mut GuestKernel) {
     let time = get_time();
     let mut next = time + get_default_timer();
     if guest.shadow_state.get_sie() & STIE != 0 {
         if guest.shadow_state.get_mtimecmp() <= time {
-            // hdebug!("guest kernel timer interrupt");
             // 表明此时 Guest OS 发生中断
             guest.shadow_state.interrupt = true;
             // 设置 sip 寄存器
@@ -180,8 +179,6 @@ pub fn timer_handler(guest: &mut GuestKernel, ctx: &mut TrapContext) {
             next = next.min(guest.shadow_state.get_mtimecmp())
         }
     }
-    // 可能转发中断
-    maybe_forward_interrupt(guest, ctx);
     // 设置下次中断
     set_timer(next);
 }
@@ -205,7 +202,8 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 没有发生中断，返回
     if !guest.shadow_state.interrupt{ return }
     let state = &mut guest.shadow_state;
-    if (!state.smode() || state.get_sstatus() & STATUS_SIE != 0) && (state.get_sie() & state.csrs.sip != 0) {
+    if (!state.smode() || state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
+        hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
         // 如果开启中断且有中断正在等待
         let mut cause: usize = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
         else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
@@ -221,4 +219,19 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
         state.interrupt = false;
     }
 }
+
+// pub fn forward_interrupt(state: &mut crate::guest::ShadowState, ctx: &mut TrapContext) {
+//     hdebug!("forward interrupt, sepc: {:#x}", ctx.sepc);
+//     // 如果开启中断且有中断正在等待
+//     let mut cause: usize = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
+//     else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
+//     else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
+//     else{ unreachable!() };
+//     cause = (1 << 63) | cause;
+//     state.write_scause(cause);
+//     state.write_stval(0);
+//     state.write_sepc(ctx.sepc);
+//     state.push_sie();
+//     ctx.sepc = state.get_stvec();
+// }
 

@@ -74,6 +74,9 @@ impl ShadowState {
         if !self.csrs.sie & value != 0{
             self.interrupt = true;
         }
+        if value.get_bit(STIE_BIT) {
+            unsafe{ riscv::register::sie::set_stimer() };
+        }
         self.csrs.sie = val;
     }
     pub fn write_sip(&mut self, val: usize) {
@@ -115,7 +118,7 @@ impl ShadowState {
 
 use riscv::addr::BitField;
 
-use crate::{trap::trap_return, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT}, sie::{SEIE, STIE, SSIE}, sip::SSIP}};
+use crate::{trap::trap_return, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
 
 use super::pmap::ShadowPageTables;
 

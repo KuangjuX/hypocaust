@@ -15,7 +15,7 @@ use switch::__switch;
 use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
 
-use self::context::ShadowState;
+pub use self::context::ShadowState;
 use self::pmap::PageTableRoot;
 
 
@@ -173,6 +173,7 @@ impl GuestKernel {
     /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
     /// 4. Finally, VMM sets the real satp to point to the shadow page table
     pub fn satp_handler(&mut self, satp: usize) {
+        hdebug!("write satp: {:#x}", satp);
         match (satp >> 60) & 0xf {
             0 => { self.write_shadow_csr(csr::satp, satp)}
             8 => {
