@@ -343,7 +343,7 @@ impl GuestKernel {
             self.make_rmap(root_gpa, &mut rmap);
 
             // 修改 `shadow page table`
-            hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, shadow_pgt.token());
+            // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, shadow_pgt.token());
             let shadow_page_table = ShadowPageTable::new(satp, shadow_pgt, rmap);
             self.shadow_state.shadow_page_tables.push(shadow_page_table);
         }
