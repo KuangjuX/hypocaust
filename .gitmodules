@@ -1,4 +1,3 @@
-[submodule "riscv-decode"]
-	path = riscv-decode
-	url = git@github.com:KuangjuX/riscv-decode.git
-
+[submodule "minikernel"]
+	path = minikernel
+	url = git@github.com:KuangjuX/minikernel.git
