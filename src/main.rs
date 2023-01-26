@@ -1,7 +1,4 @@
 //! The main module and entrypoint
-
-// #![deny(missing_docs)]
-// #![deny(warnings)]
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
@@ -10,6 +7,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
 #![deny(warnings)]
+// #![deny(missing_docs)]
 
 
 extern crate alloc;

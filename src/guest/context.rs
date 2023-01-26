@@ -92,11 +92,19 @@ impl ShadowState {
     pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }
     pub fn write_mtimecmp(&mut self, val: usize) { self.csrs.mtimecmp = val }
 
+    /// ref: riscv-privileged
+    /// The `SPIE` bit indicates whether supervisor interrupts were enabled prior to
+    /// trapping into supervisor mode. When a trap is taken into supervisor mode, `SPIE` is set 
+    /// to 0. When an `SRET` instruction is executed, `SIE` is set to `SPIE`, then `SPIE` is set to 1.
     pub fn push_sie(&mut self) {
         self.csrs.sstatus.set_bit(STATUS_SPIE_BIT, self.csrs.sstatus.get_bit(STATUS_SIE_BIT));
         self.csrs.sstatus.set_bit(STATUS_SIE_BIT, false);
     }
 
+    /// ref: riscv-privileged
+    /// The `SPIE` bit indicates whether supervisor interrupts were enabled prior to
+    /// trapping into supervisor mode. When a trap is taken into supervisor mode, `SPIE` is set 
+    /// to 0. When an `SRET` instruction is executed, `SIE` is set to `SPIE`, then `SPIE` is set to 1.
     pub fn pop_sie(&mut self) {
         if !self.csrs.sstatus.get_bit(STATUS_SIE_BIT) && self.csrs.sstatus.get_bit(STATUS_SPIE_BIT) {
             self.interrupt = true;
@@ -106,7 +114,7 @@ impl ShadowState {
     }
 
     pub fn smode(&self) -> bool { 
-        self.csrs.sstatus.get_bit(8)    
+        self.csrs.sstatus.get_bit(STATUS_SPP_BIT)    
     } 
     // 是否开启分页
     pub fn paged(&self) -> bool { self.csrs.satp != 0 }
@@ -118,7 +126,7 @@ impl ShadowState {
 
 use riscv::addr::BitField;
 
-use crate::{trap::trap_return, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
+use crate::{trap::trap_return, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
 
 use super::pmap::ShadowPageTables;
 

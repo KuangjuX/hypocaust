@@ -7,6 +7,15 @@
 - QEMU 7.0.0
 - rust 1.66.0
 
+## Build 
+```
+git clone https://github.com/KuangjuX/hypocaust.git
+cd hypocause
+git submodule update --init
+
+make qemu
+```
+
 ## Memory Region
 - DRAM Memory Region: 0x80000000 - 0x140000000 3GB   
 - hypervisor: 128MB  

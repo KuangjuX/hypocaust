@@ -134,33 +134,19 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
         // 处理地址错误
         if guest.is_guest_page_table(stval) {
             // 检测到 Guest OS 修改页表
-            let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
-            if let Some(inst) = inst {
-                match inst {
-                    riscv_decode::Instruction::Sd(i) => {
-                        let rs1 = i.rs1() as usize;
-                        let rs2 = i.rs2() as usize;
-                        let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-                        let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                        let paddr = guest.gpa2hpa(vaddr);
-                        unsafe{
-                            core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
-                        }
-                        guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
-                    },
-                    _ => panic!("sepc: {:#x}, stval: {:#x}", ctx.sepc, stval)
-                }
-            }
-            // panic!();
-            ctx.sepc += len;
-            return;
+            handle_gpt(guest, ctx);
+        }else if guest.virt_device.qemu_virt_tester.in_region(stval) {
+            handle_qemu_virt(guest, ctx);
+        }else{
+            panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
         }
-        panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
     }else{
         // 转发到 Guest OS 处理
         forward_exception(guest, ctx)
     }
 }
+
+
 
 /// 时钟中断处理函数
 pub fn timer_handler(guest: &mut GuestKernel) {
@@ -179,6 +165,46 @@ pub fn timer_handler(guest: &mut GuestKernel) {
     }
     // 设置下次中断
     set_timer(next);
+}
+
+/// 处理页表
+pub fn handle_gpt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+    let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
+    if let Some(inst) = inst {
+        match inst {
+            riscv_decode::Instruction::Sd(i) => {
+                let rs1 = i.rs1() as usize;
+                let rs2 = i.rs2() as usize;
+                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
+                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+                let paddr = guest.gpa2hpa(vaddr);
+                unsafe{
+                    core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
+                }
+                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
+            },
+            _ => panic!("sepc: {:#x}", ctx.sepc)
+        }
+    }
+    ctx.sepc += len;
+}
+
+pub fn handle_qemu_virt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+    let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
+    if let Some(inst) = inst {
+        match inst {
+            riscv_decode::Instruction::Sw(i) => {
+                let rs1 = i.rs1() as usize;
+                let rs2 = i.rs2() as usize;
+                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
+                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+                let value = ctx.x[rs2];
+                guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
+            }
+            _ => panic!("stval: {:#x}", ctx.sepc)
+        }
+    }
+    ctx.sepc += len;
 }
 
 /// 向 guest kernel 转发异常

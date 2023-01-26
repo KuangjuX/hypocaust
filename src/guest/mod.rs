@@ -8,12 +8,15 @@ mod switch;
 mod context;
 mod pmap;
 mod virtirq;
+mod virtdevice;
 
 use context::TaskContext;
 use alloc::vec::Vec;
 use switch::__switch;
 use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
+use virtdevice::VirtDevice;
+
 
 pub use self::context::ShadowState;
 use self::pmap::PageTableRoot;
@@ -102,7 +105,9 @@ pub struct GuestKernel {
     pub shadow_state: ShadowState,
     pub index: usize,
     /// Guest OS 是否运行在 S mode
-    pub smode: bool
+    pub smode: bool,
+    /// Virtual emulated device in qemu
+    pub virt_device: VirtDevice
 }
 
 impl GuestKernel {
@@ -126,7 +131,8 @@ impl GuestKernel {
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
             index,
-            smode: true
+            smode: true,
+            virt_device: VirtDevice::new()
         };
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();
