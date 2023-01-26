@@ -8,7 +8,7 @@ use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::mm::PageTableEntry;
-use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER };
+use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
 
@@ -28,7 +28,10 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                     SBI_CONSOLE_PUTCHAR => {
                         let c = ctx.x[10];
                         console_putchar(c);
-                    },
+                    }
+                    SBI_CONSOLE_GETCHAR => {
+
+                    }
                     _ => {
                         forward_exception(guest, ctx);
                         return;

@@ -1,5 +1,6 @@
 use crate::mm::MemoryRegion;
 
+/// Software emulated device used in VMM
 pub struct VirtDevice {
     pub qemu_virt_tester: QemuVirtTester
 }
@@ -13,6 +14,9 @@ impl VirtDevice {
 
 }
 
+
+
+/// Software emulated qemu virt test
 pub struct QemuVirtTester {
     pub mmregs: MemoryRegion<u32>
 }
