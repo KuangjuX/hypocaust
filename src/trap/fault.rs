@@ -1,16 +1,22 @@
 
 
 use riscv::addr::BitField;
-use riscv::register::{stval, scause};
+use riscv::register::{stval, scause, sscratch};
 
 use super::TrapContext;
+use crate::pagetracker::print_guest_backtrace;
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
+use crate::constants::layout::PAGE_SIZE;
 use crate::mm::PageTableEntry;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
+
+
+/// ebreak flag, gdb can make breakpoint here.
+pub fn ebreak(){ hdebug!("ebreak"); }
 
 /// 处理特权级指令问题
 pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
@@ -38,6 +44,9 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                         return;
                     }
                 }
+            },
+            riscv_decode::Instruction::Ebreak => {
+                ebreak();
             }
             riscv_decode::Instruction::Csrrc(i) => {
                 let mask = ctx.x[i.rs1() as usize];
@@ -98,6 +107,7 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                 if !guest.shadow_state.smode() {
                     guest.shadow_state.interrupt = true;
                 }
+                // hdebug!("sret: spec -> {:#x}", ctx.sepc);
                 return;
             }
             riscv_decode::Instruction::SfenceVma(i) => {
@@ -145,6 +155,8 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
             panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
         }
     }else{
+        hdebug!("forward exception: sepc -> {:#x}, stval -> {:#x}, sscratch -> {:#x}", ctx.sepc, stval, sscratch::read());
+        print_guest_backtrace(guest, ctx);
         // 转发到 Guest OS 处理
         forward_exception(guest, ctx)
     }
@@ -230,10 +242,11 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 /// 检测 Guest OS 是否发生中断，若有则进行转发
 pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     // 没有发生中断，返回
-    if !guest.shadow_state.interrupt  { return }
+    if !guest.shadow_state.interrupt || in_guest(ctx.sepc) { return }
     let state = &mut guest.shadow_state;
     // 当前状态处于用户态，且开启中断并有中断正在等待
     if (!state.smode() && state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
+        // hdebug!("forward timer interrupt: sepc -> {:#x}", ctx.sepc);
         let cause = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
         else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
         else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
@@ -248,6 +261,10 @@ pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     }else{
         state.interrupt = false;
     }
+}
+
+pub fn in_guest(addr: usize) -> bool {
+    return (addr >= 0x8000_0000 && addr <= 0x8800_0000) || (addr >= 0x3ffffff000 && addr <= 0x3ffffff000 + PAGE_SIZE)
 }
 
 

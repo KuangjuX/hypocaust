@@ -28,6 +28,7 @@ QEMUOPTS    +=-serial stdio
 
 
 $(GUEST_KERNEL_ELF):
+	cd minikernel/user && cargo build --release
 	cd minikernel && cargo build && cp target/$(TARGET)/$(MODE)/minikernel ../guest_kernel
 
 # $(GUEST_KERNEL_BIN): $(GUEST_KERNEL_ELF)
@@ -47,6 +48,7 @@ qemu: $(KERNEL_BIN)
 clean:
 	cargo clean
 	cd minikernel && cargo clean
+	cd minikernel/user && cargo clean
 	rm guest_kernel && rm guest.S && rm hyper.S
 
 

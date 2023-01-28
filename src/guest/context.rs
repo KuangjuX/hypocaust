@@ -86,7 +86,10 @@ impl ShadowState {
         self.csrs.sip = (self.csrs.sip & !SSIP) | (val & SSIP);
     }
     pub fn write_sscratch(&mut self, val: usize) { self.csrs.sscratch = val }
-    pub fn write_sepc(&mut self, val: usize) { self.csrs.sepc = val }
+    pub fn write_sepc(&mut self, val: usize) { 
+        if val == 0 { panic!("current sepc -> {:#x}", self.csrs.sepc) }
+        self.csrs.sepc = val
+     }
     pub fn write_scause(&mut self, val: usize)  { self.csrs.scause = val }
     pub fn write_stval(&mut self, val: usize) { self.csrs.stval  = val }
     pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }

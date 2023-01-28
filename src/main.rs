@@ -28,6 +28,7 @@ mod sync;
 mod timer;
 pub mod trap;
 mod guest;
+mod pagetracker;
 
 
 use crate::{mm::MemorySet, guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};

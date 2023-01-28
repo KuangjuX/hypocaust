@@ -322,7 +322,7 @@ impl GuestKernel {
             // 尝试映射用户地址空间
             self.try_map_user_area(&guest_pgt, &mut shadow_pgt);
             // 映射 IOMMU 
-            self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
+            // self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间的跳板页
             self.try_map_user_trampoline(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间 Trap Context

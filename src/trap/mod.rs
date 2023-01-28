@@ -55,6 +55,7 @@ pub fn disable_timer_interrupt() {
     unsafe{ sie::clear_stimer(); }
 }
 
+
 #[no_mangle]
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler() -> ! {
@@ -68,6 +69,9 @@ pub fn trap_handler() -> ! {
     let guest = &mut inner.kernels[id];
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
+            ifault(guest, ctx);
+        },
+        Trap::Exception(Exception::Breakpoint) => { 
             ifault(guest, ctx);
         }
         Trap::Exception(Exception::StoreFault)
@@ -86,10 +90,11 @@ pub fn trap_handler() -> ! {
         },
         _ => {  
             panic!(
-                "Unsupported trap {:?}, stval = {:#x} spec: {:#x}!",
+                "Unsupported trap {:?}, stval = {:#x} spec: {:#x} smode -> {}!",
                 scause.cause(),
                 stval,
-                ctx.sepc
+                ctx.sepc,
+                guest.shadow_state.smode()
             );
         }
     }
