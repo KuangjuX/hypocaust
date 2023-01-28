@@ -375,14 +375,17 @@ impl GuestKernel {
                 let index = (vaddr & 0xfff) / size_of::<PageTableEntry>();
                 map_vpn.set_bits((i * 9)..(i * 9) + 9, index);
                 let map_vpn = VirtPageNum::from(map_vpn);
-                let mut flags = PTEFlags::U;
-                if pte.readable(){ flags |= PTEFlags::R };
-                if pte.writable(){ flags |= PTEFlags::W };
-                if pte.executable(){ flags |= PTEFlags::X };
-
-                let pa = (pte.ppn().0 << 12) + va2pa;
-                let new_ppn = PhysPageNum::from(pa >> 12);
-                spt.page_table.map(map_vpn, new_ppn, flags);
+                if pte.is_valid() {
+                    let mut flags = PTEFlags::U;
+                    if pte.readable(){ flags |= PTEFlags::R };
+                    if pte.writable(){ flags |= PTEFlags::W };
+                    if pte.executable(){ flags |= PTEFlags::X };
+                    let pa = (pte.ppn().0 << 12) + va2pa;
+                    let ppn = PhysPageNum::from(pa >> 12);
+                    spt.page_table.map(map_vpn, ppn, flags);
+                }else{
+                    spt.page_table.unmap(map_vpn);
+                }
             }else {
                 unimplemented!()
             }
