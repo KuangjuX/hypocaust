@@ -1,4 +1,4 @@
-use crate::{guest::GuestKernel, trap::TrapContext, mm::VirtPageNum};
+use crate::{guest::{GuestKernel, ShadowPageTables}, trap::TrapContext, mm::{VirtPageNum, PageTable}, constants::layout::{GUEST_TRAP_CONTEXT}};
 
 
 #[allow(unused)]
@@ -18,9 +18,13 @@ pub fn print_guest_backtrace(guest: &GuestKernel, ctx: &TrapContext) {
             Some(va) => {
                 let vpn = VirtPageNum::from(va >> 12);
                 let offset = va & 0xfff;
-                let ppn = spt.page_table.translate(vpn).unwrap();
-                let pa = offset + (ppn.ppn().0 << 12);
-                unsafe{ core::ptr::read(pa as *const usize) }
+                match spt.page_table.translate(vpn) {
+                    Some(ppn) => {
+                        let pa = offset + (ppn.ppn().0 << 12);
+                        unsafe{ core::ptr::read(pa as *const usize) }
+                    }
+                    None => break
+                }
             },
             None => break,
         };
@@ -31,11 +35,39 @@ pub fn print_guest_backtrace(guest: &GuestKernel, ctx: &TrapContext) {
             Some(va) => {
                 let vpn = VirtPageNum::from(va >> 12);
                 let offset = va & 0xfff;
-                let ppn = spt.page_table.translate(vpn).unwrap();
-                let pa = offset + (ppn.ppn().0 << 12);
-                unsafe{ core::ptr::read(pa as *const usize) }
+                match spt.page_table.translate(vpn) {
+                    Some(ppn) => {
+                        let pa = offset + (ppn.ppn().0 << 12);
+                        unsafe{ core::ptr::read(pa as *const usize) }
+                    }
+                    None => break
+                }
             },
             None => break,
         };
+    }
+}
+
+#[allow(unused)]
+pub fn print_trap_context(spt: &PageTable) {
+    if let Some(pte) = spt.translate(VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12)) {
+        let mut pa = (pte.ppn().0 << 12) as *mut usize;
+        for i in 0..(288 / core::mem::size_of::<usize>()) {
+            unsafe{
+                pa = pa.add(i);
+                let x = core::ptr::read(pa);
+                println!("{}(sp) -> {:#x}", i * core::mem::size_of::<usize>(), x);
+            }
+        }
+    }
+}
+
+#[allow(unused)]
+pub fn print_spt_trap_context_addr(spts: &ShadowPageTables) {
+    for spt in spts.page_tables.iter() {
+        if let Some(pte) = spt.page_table.translate(VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12)) {
+            let pa = pte.ppn().0 << 12;
+            println!("trap context pa -> {:#x}", pa);
+        }
     }
 }

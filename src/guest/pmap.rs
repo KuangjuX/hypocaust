@@ -35,11 +35,11 @@ pub struct Rmap {
 pub struct ShadowPageTable {
     // mode: PageTableRoot,
     /// 客户页表对应的 `satp`
-    satp: usize,
+    pub satp: usize,
     /// 影子页表
     pub page_table: PageTable,
     /// 反向页表，用于从物理地址找回虚拟地址
-    rmap: Rmap
+    pub rmap: Rmap
 }
 
 impl ShadowPageTable {
@@ -55,7 +55,7 @@ impl ShadowPageTable {
 
 /// 用来存放 Guest
 pub struct ShadowPageTables {
-    page_tables: VecDeque<ShadowPageTable>
+    pub page_tables: VecDeque<ShadowPageTable>
 }
 
 impl ShadowPageTables {
@@ -184,7 +184,7 @@ impl GuestKernel {
     }
 
     fn try_map_user_area(&self, guest_pgt: &PageTable, shadow_pgt: &mut PageTable) {
-        for gva in (0..0x800_0000).step_by(PAGE_SIZE) {
+        for gva in (0x10000..0x80000).step_by(PAGE_SIZE) {
             let gvpn = VirtPageNum::from(gva >> 12);
             let gppn = guest_pgt.translate_gvpn(gvpn, &self.memory.page_table());
             // 如果 guest ppn 存在且有效
@@ -256,7 +256,7 @@ impl GuestKernel {
         let mut queue = VecDeque::new();
         let mut buffer = Vec::new();
         queue.push_back(root_gvpn); 
-        for _ in 0..3 {
+        for _ in 0..=2 {
             while !queue.is_empty() {
                 let vpn = queue.pop_front().unwrap();
                 let ppn = PhysPageNum::from(self.gpa2hpa(vpn.0 << 12) >> 12);
@@ -280,7 +280,7 @@ impl GuestKernel {
         let mut queue = VecDeque::new();
         let mut buffer = Vec::new();
         queue.push_back(root_gvpn); 
-        for _ in 0..2 {
+        for _ in 0..=1 {
             while !queue.is_empty() {
                 let vpn = queue.pop_front().unwrap();
                 let ppn = PhysPageNum::from(self.gpa2hpa(vpn.0 << 12) >> 12);
@@ -321,8 +321,6 @@ impl GuestKernel {
             self.try_map_guest_area(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户地址空间
             self.try_map_user_area(&guest_pgt, &mut shadow_pgt);
-            // 映射 IOMMU 
-            // self.try_map_iommu(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间的跳板页
             self.try_map_user_trampoline(&guest_pgt, &mut shadow_pgt);
             // 尝试映射用户空间 Trap Context

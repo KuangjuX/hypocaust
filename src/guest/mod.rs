@@ -19,6 +19,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
+pub use self::pmap::ShadowPageTables;
 use self::pmap::PageTableRoot;
 
 
@@ -153,7 +154,7 @@ impl GuestKernel {
     pub fn get_user_token(&self) -> usize {
         match self.shadow() {
             PageTableRoot::GPA => { self.memory.token() }
-            PageTableRoot::GVA | PageTableRoot::UVA=> { 
+            PageTableRoot::GVA | PageTableRoot::UVA => { 
                 if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.get_satp()) {
                     return spt.page_table.token()
                 }
@@ -166,7 +167,7 @@ impl GuestKernel {
     pub fn shadow(&self) -> PageTableRoot {
         if (self.shadow_state.get_satp() >> 60) & 0xf == 0 {
             PageTableRoot::GPA
-        }else if !self.smode {
+        }else if !self.shadow_state.smode() {
             PageTableRoot::UVA
         }else {
             PageTableRoot::GVA
@@ -179,8 +180,7 @@ impl GuestKernel {
     /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
     /// 4. Finally, VMM sets the real satp to point to the shadow page table
     pub fn satp_handler(&mut self, satp: usize, sepc: usize) {
-        // hdebug!("write satp -> {:#x}", satp);
-        if satp == 0{ panic!("sepc -> {:#x}", sepc); }
+        if satp == 0 { panic!("sepc -> {:#x}", sepc); }
         match (satp >> 60) & 0xf {
             0 => { self.write_shadow_csr(csr::satp, satp)}
             8 => {

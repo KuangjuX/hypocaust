@@ -87,7 +87,9 @@ impl ShadowState {
     }
     pub fn write_sscratch(&mut self, val: usize) { self.csrs.sscratch = val }
     pub fn write_sepc(&mut self, val: usize) { 
-        if val == 0 { panic!("current sepc -> {:#x}", self.csrs.sepc) }
+        if val == 0 {
+            panic!("current sepc -> {:#x}", self.csrs.sepc) 
+        }
         self.csrs.sepc = val
      }
     pub fn write_scause(&mut self, val: usize)  { self.csrs.scause = val }
@@ -129,9 +131,9 @@ impl ShadowState {
 
 use riscv::addr::BitField;
 
-use crate::{trap::trap_return, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
+use crate::{trap::{trap_return}, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
 
-use super::pmap::ShadowPageTables;
+use super::{pmap::ShadowPageTables};
 
 
 #[repr(C)]
