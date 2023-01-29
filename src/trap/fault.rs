@@ -8,8 +8,8 @@ use crate::pagetracker::{print_guest_backtrace};
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
-use crate::constants::layout::{PAGE_SIZE, GUEST_TRAP_CONTEXT};
-use crate::mm::{PageTableEntry, VirtPageNum};
+use crate::constants::layout::{PAGE_SIZE};
+use crate::mm::PageTableEntry;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
@@ -78,15 +78,9 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                 // 向 Shadow CSR 写入
                 let val = ctx.x[i.rs1() as usize];
                 if i.csr()  == crate::constants::csr::sepc as u32 && val == 0{
-                    hdebug!("ctx sepc -> {:#x}", ctx.sepc);
+                    hdebug!("satp -> {:#x}", guest.shadow_state.csrs.satp);
                     let spt = &guest.shadow_state.shadow_page_tables.find_shadow_page_table(guest.shadow_state.get_satp()).unwrap().page_table;
-                    let trap_ctx_ppn = spt.translate(VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12)).unwrap().ppn().0;
-                    unsafe{
-                        let trap_ctx = &*((trap_ctx_ppn << 12) as *const TrapContext);
-                        hdebug!("trap ctx: {:?}", trap_ctx);
-                        hdebug!("satp: {:#x}", guest.shadow_state.csrs.satp);
-                        hdebug!("trap ctx ppn: {:#x}", trap_ctx_ppn);
-                    }
+                    spt.print_trap_context();
                 }
                 match i.csr() as usize {
                     crate::constants::csr::satp => { guest.satp_handler(val, ctx.sepc) },
