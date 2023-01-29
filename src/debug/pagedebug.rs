@@ -23,7 +23,7 @@ pub fn print_page_table(pte_array: &[PageTableEntry], level: u8) {
             for _ in 0..(3 - level) {
                 print!("  ");
             }
-            println!("{:#x}: {:#x}", i * 8, pte.ppn().0);
+            println!("{}: {:#x} {:?}", i, pte.ppn().0, pte.flags());
         }
         if pte.is_valid() {
             assert!(level != 0);
@@ -41,13 +41,13 @@ pub fn print_guest_page_table(pte_array: &[PageTableEntry], level: u8) {
             for _ in 0..(3 - level) {
                 print!("  ");
             }
-            println!("{:#x}: {:#x}", i * 8, pte.ppn().0);
+            println!("{}: {:#x} {:?}", i, pte.ppn().0, pte.flags());
         }
         if pte.is_valid() {
             assert!(level != 0);
             let ppn = PhysPageNum::from(((pte.ppn().0 << 12) + 0x800_0000) >> 12);
             let pte_array = ppn.get_pte_array();
-            print_page_table(pte_array, level - 1);
+            print_guest_page_table(pte_array, level - 1);
         }
     }
 }
