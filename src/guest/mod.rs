@@ -19,7 +19,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
-pub use self::pmap::ShadowPageTables;
+pub use self::pmap::{ ShadowPageTables, ShadowPageTable };
 use self::pmap::PageTableRoot;
 
 

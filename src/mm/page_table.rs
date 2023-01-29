@@ -93,6 +93,10 @@ impl PageTable {
         }
     }
 
+    pub fn root_ppn(&self) -> PhysPageNum {
+        self.root_ppn
+    }
+
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;

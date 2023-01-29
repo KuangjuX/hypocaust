@@ -307,7 +307,7 @@ impl GuestKernel {
         if self.shadow_state.shadow_page_tables.find_shadow_page_table(satp).is_none() {
             // 如果影子页表中没有发现，新建影子页表
             // 根据 satp 获取 guest kernel 根页表的物理地址
-            let root_gpa = (satp << 12) & 0x7f_ffff_ffff;
+            let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
             let root_hppn = PhysPageNum::from(self.gpa2hpa(root_gpa) >> 12);
             let guest_pgt = PageTable::from_ppn(root_hppn);
             // 翻译的时候不能直接翻译，因为此时取出的 pte 都是 Guest OS 的物理地址，需要将 pte 翻译成 hypervisor 的地址
@@ -350,10 +350,10 @@ impl GuestKernel {
     /// 同步 `shadow page table` & `guest page table`
     pub fn sync_shadow_page_table(&mut self, mut vaddr: usize, pte: PageTableEntry) {
         let satp = self.shadow_state.get_satp();
-        let root_ppn = PhysPageNum::from(satp & 0x7ff_ffff);
+        let root_ppn = PhysPageNum::from(satp & 0xfff_ffff_ffff);
         let va2pa = self.gpa2hpa(0);
         if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table_mut(satp) {
-            let rmap = &spt.rmap;
+            let rmap = &mut spt.rmap;
             let mut map_vpn: usize = 0;
             let mut ppn = PhysPageNum::from(vaddr >> 12);
             let mut i = 0;
@@ -383,6 +383,7 @@ impl GuestKernel {
                     spt.page_table.map(map_vpn, ppn, flags);
                 }else{
                     spt.page_table.unmap(map_vpn);
+                    rmap.rmap.remove(&PhysPageNum::from(vaddr >> 12));
                 }
             }else {
                 unimplemented!()

@@ -4,12 +4,12 @@ use riscv::addr::BitField;
 use riscv::register::{stval, scause, sscratch};
 
 use super::TrapContext;
-use crate::pagetracker::{print_guest_backtrace};
+use crate::debug::{print_guest_backtrace};
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::constants::layout::{PAGE_SIZE};
-use crate::mm::PageTableEntry;
+use crate::mm::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable};
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
@@ -81,6 +81,16 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                     hdebug!("satp -> {:#x}", guest.shadow_state.csrs.satp);
                     let spt = &guest.shadow_state.shadow_page_tables.find_shadow_page_table(guest.shadow_state.get_satp()).unwrap().page_table;
                     spt.print_trap_context();
+                    // 打印 SPT
+                    let root_vpn = VirtPageNum::from(guest.shadow_state.csrs.satp & 0xfff_ffff_ffff);
+                    let root_ppn = spt.translate(root_vpn).unwrap().ppn().0;
+                    hdebug!("root ppn -> {:#x}", root_ppn);
+                    spt.print_page_table();
+                    // 打印 GPT
+                    let root_gpa = (guest.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
+                    let root_hppn = PhysPageNum::from(guest.gpa2hpa(root_gpa) >> 12);
+                    let guest_pgt = PageTable::from_ppn(root_hppn);
+                    guest_pgt.print_guest_page_table();
                 }
                 match i.csr() as usize {
                     crate::constants::csr::satp => { guest.satp_handler(val, ctx.sepc) },
