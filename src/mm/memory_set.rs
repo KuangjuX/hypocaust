@@ -6,8 +6,8 @@ use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::page_table::{StepByOne, VPNRange, PPNRange};
 use crate::constants::layout::{ 
     PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, 
-    GUEST_KERNEL_VIRT_START_1, MEMORY_END, MMIO, 
-    GUEST_KERNEL_VIRT_END_1, GUEST_KERNEL_PHY_END_1
+    GUEST_KERNEL_VIRT_START, MEMORY_END, MMIO, 
+    GUEST_KERNEL_VIRT_END, GUEST_KERNEL_PHY_END_1
 };
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
@@ -265,8 +265,8 @@ impl<P> MemorySet<P> where P: PageTable {
         let offset = paddr as usize - GUEST_KERNEL_PHY_START_1;
         // 映射其他物理内存
         memory_set.push(MapArea::new(
-                VirtAddr(offset + GUEST_KERNEL_VIRT_START_1), 
-                VirtAddr(GUEST_KERNEL_VIRT_END_1), 
+                VirtAddr(offset + GUEST_KERNEL_VIRT_START), 
+                VirtAddr(GUEST_KERNEL_VIRT_END), 
                 Some(PhysAddr(paddr as usize)), 
                 Some(PhysAddr(GUEST_KERNEL_PHY_END_1)), 
                 MapType::Linear, 

@@ -11,7 +11,7 @@ use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::constants::layout::{PAGE_SIZE};
 use crate::page_table::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable, PageTableSv39};
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
-use crate::guest::GuestKernel;
+use crate::guest::{GuestKernel, gpa2hpa};
 use crate::timer::{get_time, get_default_timer};
 
 
@@ -88,7 +88,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                     spt.print_page_table();
                     // 打印 GPT
                     let root_gpa = (guest.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
-                    let root_hppn = PhysPageNum::from(guest.gpa2hpa(root_gpa) >> 12);
+                    let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, guest.index) >> 12);
                     let guest_pgt = PageTableSv39::from_ppn(root_hppn);
                     guest_pgt.print_guest_page_table();
                 }
@@ -212,12 +212,23 @@ pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mu
                 let rs2 = i.rs2() as usize;
                 let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
                 let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                let paddr = guest.gpa2hpa(vaddr);
+                let paddr = gpa2hpa(vaddr, guest.index);
                 unsafe{
                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
                 }
                 guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
             },
+            riscv_decode::Instruction::Sb(i) => {
+                let rs1 = i.rs1() as usize;
+                let rs2 = i.rs2() as usize;
+                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
+                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+                let paddr = gpa2hpa(vaddr, guest.index);
+                unsafe{
+                    core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
+                }
+                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
+            }
             _ => panic!("sepc: {:#x}", ctx.sepc)
         }
     }

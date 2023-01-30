@@ -1,6 +1,6 @@
 //! Implementation of physical and virtual address and page number.
 
-use super::{PageTableEntry, PageTable};
+use super::PageTableEntry;
 use crate::constants::layout::{PAGE_SIZE, PAGE_SIZE_BITS};
 use core::fmt::{self, Debug, Formatter};
 
@@ -163,17 +163,6 @@ impl VirtPageNum {
 
 impl PhysPageNum {
     /// 暂时的实现
-    pub fn get_pte_array_by_pgt<T: PageTable>(&self, pgt: Option<&T>) -> &'static mut [PageTableEntry] {
-        let pa: PhysAddr = (*self).into();
-        // hdebug!("pa: {:?}", pa);
-        if let Some(pgt) = pgt {
-            let ppn = pgt.translate(VirtPageNum::from(pa.0 >> 12)).unwrap().ppn();
-            let pa = ppn.0 << 12;
-            unsafe { core::slice::from_raw_parts_mut((pa) as *mut PageTableEntry, 512) }
-        }else{
-            unsafe { core::slice::from_raw_parts_mut((pa.0) as *mut PageTableEntry, 512) }
-        }
-    }
     pub fn get_pte_array(&self) -> &'static mut [PageTableEntry] {
         let pa: PhysAddr = (*self).into();
         unsafe { core::slice::from_raw_parts_mut(pa.0 as *mut PageTableEntry, 512) }

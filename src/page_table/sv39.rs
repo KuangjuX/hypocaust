@@ -1,6 +1,7 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
 use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable};
+use crate::guest::gpa2hpa;
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -80,14 +81,17 @@ impl PageTable for PageTableSv39 {
         result
     }
 
-    fn find_guest_pte(&self, vpn: VirtPageNum, pgt: &Self) -> Option<&mut PageTableEntry> {
+    fn find_guest_pte(&self, vpn: VirtPageNum, hart_id: usize) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
             let pte;
-            if i == 0{ pte = &mut ppn.get_pte_array_by_pgt::<PageTableSv39>(None)[*idx]; }
-            else{ pte = &mut ppn.get_pte_array_by_pgt(Some(pgt))[*idx]; }
+            if i == 0{ pte = &mut ppn.get_pte_array()[*idx]; }
+            else{ 
+                ppn = PhysPageNum::from(gpa2hpa(ppn.0 << 12, hart_id) >> 12);
+                pte = &mut ppn.get_pte_array()[*idx]; 
+            }
             if i == 2 {
                 result = Some(pte);
                 break;
@@ -128,8 +132,8 @@ impl PageTable for PageTableSv39 {
     }
 
     #[allow(unused)]
-    fn translate_gvpn(&self, vpn: VirtPageNum, guest_pgt: &Self) -> Option<PageTableEntry> {
-        self.find_guest_pte(vpn, guest_pgt).map(|pte| *pte)
+    fn translate_gvpn(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry> {
+        self.find_guest_pte(vpn, hart_id).map(|pte| *pte)
     }
 
     fn token(&self) -> usize {

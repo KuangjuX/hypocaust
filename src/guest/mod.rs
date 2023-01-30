@@ -2,7 +2,7 @@ use crate::debug::PageDebug;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
 use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
 use crate::trap::{TrapContext, trap_handler};
-use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1};
+use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
 
 
@@ -21,8 +21,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
-pub use self::pmap::{ ShadowPageTables, ShadowPageTable };
-use self::pmap::PageTableRoot;
+pub use self::pmap::{ ShadowPageTables, ShadowPageTable, PageTableRoot, gpa2hpa, hpa2gpa };
 
 
 
@@ -144,7 +143,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();
         *trap_cx = TrapContext::app_init_context(
-            GUEST_KERNEL_VIRT_START_1,
+            GUEST_KERNEL_VIRT_START,
             0,
             KERNEL_SPACE.exclusive_access().token(),
             kernel_stack_top,

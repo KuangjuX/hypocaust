@@ -1,14 +1,9 @@
-//! Memory management implementation
-//!
-//! SV39 page-based virtual-memory architecture for RV64 systems, and
-//! everything about memory management, like frame allocator, page table,
-//! map area and memory set, is implemented here.
-//!
-//! Every task or process has a memory_set to control its virtual memory.
 
 mod address;
-mod sv39;
 mod pte;
+mod sv39;
+mod sv48;
+mod sv57;
 
 
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
@@ -23,7 +18,7 @@ pub trait PageTable: Clone {
     fn root_ppn(&self) -> PhysPageNum;
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
-    fn find_guest_pte(&self, vpn: VirtPageNum, pgt: &Self) -> Option<&mut PageTableEntry>;
+    fn find_guest_pte(&self, vpn: VirtPageNum, hart_id: usize) -> Option<&mut PageTableEntry>;
     #[allow(unused)]
     fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags);
     #[allow(unused)]
@@ -32,8 +27,13 @@ pub trait PageTable: Clone {
     fn try_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags);
     fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry>;
     #[allow(unused)]
-    fn translate_gvpn(&self, vpn: VirtPageNum, guest_pgt: &Self) -> Option<PageTableEntry>;
+    fn translate_gvpn(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry>;
     fn token(&self) -> usize;
+}
+
+#[allow(unused)]
+pub enum PageError {
+
 }
 
 

@@ -66,7 +66,7 @@ make qemu
 - [mit-pdos/RVirt](https://github.com/mit-pdos/RVirt)
 
 ## Questions
-See all:
+See also:
 - [Synchronize satp & SPT](https://github.com/KuangjuX/hypocaust/issues/1)
 
 ## License

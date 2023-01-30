@@ -14,8 +14,8 @@ pub const KERNEL_SPACE: usize = 128 * 1024 * 1024;
 // 客户操作系统内存映射
 pub const GUEST_KERNEL_PHY_START_1: usize = 0x8800_0000;
 pub const GUEST_KERNEL_PHY_END_1: usize = 0x9000_0000;
-pub const GUEST_KERNEL_VIRT_START_1: usize = 0x8000_0000;
-pub const GUEST_KERNEL_VIRT_END_1: usize = 0x8800_0000;
+pub const GUEST_KERNEL_VIRT_START: usize = 0x8000_0000;
+pub const GUEST_KERNEL_VIRT_END: usize = 0x8800_0000;
 
 pub const GUEST_KERNEL_PHY_START_2: usize = GUEST_KERNEL_PHY_START_1 + KERNEL_SPACE;
 pub const GUEST_KERNEL_VIRT_START_2: usize = 0x8000_0000;
