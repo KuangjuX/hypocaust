@@ -4,7 +4,8 @@ use alloc::collections::{ VecDeque, BTreeMap };
 use alloc::vec::Vec;
 use riscv::addr::BitField;
 
-use crate::page_table::{PageTable, KERNEL_SPACE, VirtPageNum, PTEFlags, PageTableEntry, PhysPageNum};
+use crate::mm::KERNEL_SPACE;
+use crate::page_table::{PageTable, VirtPageNum, PTEFlags, PageTableEntry, PhysPageNum};
 use crate::constants::layout::{ PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT, GUEST_KERNEL_VIRT_START_1, GUEST_KERNEL_VIRT_END_1, GUEST_TRAMPOLINE, GUEST_TRAP_CONTEXT };
 use crate::board::{ QEMU_VIRT_START, QEMU_VIRT_SIZE };
 use super::GuestKernel;

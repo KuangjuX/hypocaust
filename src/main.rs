@@ -32,12 +32,14 @@ mod guest;
 mod debug;
 mod page_tracking;
 mod hyp_alloc;
+mod mm;
 
 
 
 use constants::layout::PAGE_SIZE;
 
-use crate::{page_table::MemorySet, guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
+use crate::{guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
+use crate::mm::MemorySet;
 
 #[link_section = ".initrd"]
 #[cfg(feature = "embed_guest_kernel")]
@@ -95,10 +97,10 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         hyp_alloc::heap_init();
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
         // 初始化虚拟内存
-        page_table::vm_init(&guest_kernel_memory);
+        mm::vm_init(&guest_kernel_memory);
         trap::init();
-        page_table::remap_test();
-        page_table::guest_kernel_test();
+        mm::remap_test();
+        mm::guest_kernel_test();
         // 开启时钟中断
         // trap::enable_timer_interrupt();
         // timer::set_default_next_trigger();

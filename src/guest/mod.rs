@@ -1,4 +1,5 @@
-use crate::page_table::{MemorySet, VirtAddr, KERNEL_SPACE, MapPermission, PhysPageNum};
+use crate::page_table::{VirtAddr, PhysPageNum};
+use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
 use crate::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1};
 use crate::constants::csr;

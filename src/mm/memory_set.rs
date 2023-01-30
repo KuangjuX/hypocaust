@@ -1,9 +1,9 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
-use super::{PTEFlags, PageTable, PageTableEntry};
-use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-use super::{StepByOne, VPNRange, PPNRange};
+use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
+use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
+use crate::page_table::{StepByOne, VPNRange, PPNRange};
 use crate::constants::layout::{ 
     PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, 
     GUEST_KERNEL_VIRT_START_1, MEMORY_END, MMIO, 

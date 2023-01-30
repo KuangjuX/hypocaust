@@ -1,4 +1,4 @@
-use crate::page_table::MemoryRegion;
+use crate::mm::MemoryRegion;
 
 /// Software emulated device used in VMM
 pub struct VirtDevice {
