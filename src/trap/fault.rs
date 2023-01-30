@@ -9,7 +9,7 @@ use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::constants::layout::{PAGE_SIZE};
-use crate::mm::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable};
+use crate::page_table::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable};
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};

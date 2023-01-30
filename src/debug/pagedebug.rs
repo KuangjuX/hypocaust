@@ -1,4 +1,4 @@
-use crate::mm::{PageTableEntry, PageTable, PhysPageNum};
+use crate::page_table::{PageTableEntry, PageTable, PhysPageNum};
 
 impl PageTable {
     pub fn print_page_table(&self) {

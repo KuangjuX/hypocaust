@@ -1,6 +1,6 @@
 use crate::guest::GuestKernel;
 use crate::trap::TrapContext;
-use crate::mm::VirtPageNum;
+use crate::page_table::VirtPageNum;
 
 #[allow(unused)]
 pub fn print_guest_backtrace(guest: &GuestKernel, ctx: &TrapContext) {

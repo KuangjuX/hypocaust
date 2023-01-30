@@ -23,19 +23,21 @@ mod board;
 mod console;
 mod constants;
 mod lang_items;
-mod mm;
+mod page_table;
 mod sbi;
 mod sync;
 mod timer;
 pub mod trap;
 mod guest;
 mod debug;
+mod page_tracking;
+mod hyp_alloc;
 
 
 
 use constants::layout::PAGE_SIZE;
 
-use crate::{mm::MemorySet, guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
+use crate::{page_table::MemorySet, guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
 
 #[link_section = ".initrd"]
 #[cfg(feature = "embed_guest_kernel")]
@@ -90,13 +92,13 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         println!("[hypervisor] Hello Hypocaust");
         println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
         // 初始化堆及帧分配器
-        mm::heap_init();
+        hyp_alloc::heap_init();
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
         // 初始化虚拟内存
-        mm::vm_init(&guest_kernel_memory);
+        page_table::vm_init(&guest_kernel_memory);
         trap::init();
-        mm::remap_test();
-        mm::guest_kernel_test();
+        page_table::remap_test();
+        page_table::guest_kernel_test();
         // 开启时钟中断
         // trap::enable_timer_interrupt();
         // timer::set_default_next_trigger();

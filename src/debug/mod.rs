@@ -3,7 +3,7 @@ mod pagedebug;
 
 pub use backtrace::print_guest_backtrace;
 
-use crate::mm::{ PageTable, VirtPageNum };
+use crate::page_table::{ PageTable, VirtPageNum };
 use crate::constants::layout::GUEST_TRAP_CONTEXT;
 use crate::trap::TrapContext;
 
