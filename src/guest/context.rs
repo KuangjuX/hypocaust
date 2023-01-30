@@ -34,15 +34,15 @@ impl ControlRegisters {
     }
 }
 
-pub struct ShadowState {
+pub struct ShadowState<P: PageTable + PageDebug> {
     pub csrs: ControlRegisters,
     /// 影子页表
-    pub shadow_page_tables: ShadowPageTables,
+    pub shadow_page_tables: ShadowPageTables<P>,
     /// 是否发生中断
     pub interrupt: bool
 }
 
-impl ShadowState {
+impl<P> ShadowState<P> where P: PageTable + PageDebug {
     pub const fn new() -> Self {
         Self {
             csrs: ControlRegisters::new(),
@@ -131,7 +131,7 @@ impl ShadowState {
 
 use riscv::addr::BitField;
 
-use crate::{trap::{trap_return}, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}};
+use crate::{trap::{trap_return}, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}, page_table::PageTable, debug::PageDebug};
 
 use super::{pmap::ShadowPageTables};
 

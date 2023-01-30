@@ -4,12 +4,12 @@ use riscv::addr::BitField;
 use riscv::register::{stval, scause, sscratch};
 
 use super::TrapContext;
-use crate::debug::{print_guest_backtrace};
+use crate::debug::{print_guest_backtrace, PageDebug};
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::constants::layout::{PAGE_SIZE};
-use crate::page_table::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable};
+use crate::page_table::{PageTableEntry, VirtPageNum, PhysPageNum, PageTable, PageTableSv39};
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
@@ -19,7 +19,7 @@ use crate::timer::{get_time, get_default_timer};
 pub fn ebreak(){ hdebug!("ebreak"); }
 
 /// 处理特权级指令问题
-pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -89,7 +89,7 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
                     // 打印 GPT
                     let root_gpa = (guest.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
                     let root_hppn = PhysPageNum::from(guest.gpa2hpa(root_gpa) >> 12);
-                    let guest_pgt = PageTable::from_ppn(root_hppn);
+                    let guest_pgt = PageTableSv39::from_ppn(root_hppn);
                     guest_pgt.print_guest_page_table();
                 }
                 match i.csr() as usize {
@@ -146,7 +146,7 @@ pub fn ifault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 /// decode instruction from Guest OS address
-pub fn decode_instruction_at_address(guest: &GuestKernel, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
+pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKernel<P>, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
     let paddr = guest.translate_guest_vaddr(addr).unwrap();
     let i1 = unsafe{ core::ptr::read(paddr as *const u16) };
     let len = riscv_decode::instruction_length(i1);
@@ -160,7 +160,7 @@ pub fn decode_instruction_at_address(guest: &GuestKernel, addr: usize) -> (usize
 
 
 /// 处理地址错误问题
-pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn pfault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     // 获取地址错信息
     let stval = stval::read();
     if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
@@ -184,7 +184,7 @@ pub fn pfault(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 
 
 /// 时钟中断处理函数
-pub fn timer_handler(guest: &mut GuestKernel) {
+pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
     let time = get_time();
     let mut next = time + get_default_timer();
     if guest.shadow_state.csrs.sie.get_bit(STIE_BIT) {
@@ -203,7 +203,7 @@ pub fn timer_handler(guest: &mut GuestKernel) {
 }
 
 /// 处理页表
-pub fn handle_gpt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -224,7 +224,7 @@ pub fn handle_gpt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
     ctx.sepc += len;
 }
 
-pub fn handle_qemu_virt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -243,7 +243,7 @@ pub fn handle_qemu_virt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 /// 向 guest kernel 转发异常
-pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let state = &mut guest.shadow_state;
     state.write_scause(scause::read().code());
     state.write_sepc(ctx.sepc);
@@ -259,7 +259,7 @@ pub fn forward_exception(guest: &mut GuestKernel, ctx: &mut TrapContext) {
 }
 
 /// 检测 Guest OS 是否发生中断，若有则进行转发
-pub fn maybe_forward_interrupt(guest: &mut GuestKernel, ctx: &mut TrapContext) {
+pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     // 没有发生中断，返回
     if !guest.shadow_state.interrupt || in_guest(ctx.sepc) { return }
     let state = &mut guest.shadow_state;

@@ -1,16 +1,37 @@
-use crate::page_table::{PageTableEntry, PageTable, PhysPageNum};
+use crate::page_table::{PageTableEntry, PageTableSv39, PhysPageNum, VirtPageNum, PageTable};
+use crate::constants::layout::GUEST_TRAP_CONTEXT;
+use crate::trap::TrapContext;
 
-impl PageTable {
-    pub fn print_page_table(&self) {
+pub trait PageDebug {
+    fn print_page_table(&self);
+    fn print_guest_page_table(&self);
+    fn print_trap_context(&self);
+}
+
+impl PageDebug for PageTableSv39 {
+    fn print_page_table(&self) {
         let root_pte_array = self.root_ppn().get_pte_array();
         hdebug!("print page table: ");
         print_page_table(root_pte_array, 3);
     }
 
-    pub fn print_guest_page_table(&self) {
+    fn print_guest_page_table(&self) {
         let root_pte_array = self.root_ppn().get_pte_array();
         hdebug!("print guest page table: ");
         print_guest_page_table(root_pte_array, 3);
+    }
+
+    fn print_trap_context(&self) {
+        let trap_ctx_ppn = self.translate(VirtPageNum::from(GUEST_TRAP_CONTEXT >> 12)).unwrap().ppn().0;
+        hdebug!("trap ctx ppn: {:#x}", trap_ctx_ppn);
+        unsafe{
+            let trap_ctx = &*((trap_ctx_ppn << 12) as *const TrapContext);
+            for i in 0..trap_ctx.x.len() {
+                hdebug!("x{} -> {:#x}", i, trap_ctx.x[i]);
+            }
+            hdebug!("sepc -> {:#x}", trap_ctx.sepc);
+            hdebug!("sstatus -> {:#x}", trap_ctx.sstatus.bits());
+        }
     }
 
 }

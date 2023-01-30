@@ -1,7 +1,7 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
-use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
+use crate::page_table::{PTEFlags, PageTable, PageTableEntry, PageTableSv39};
 use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::page_table::{StepByOne, VPNRange, PPNRange};
 use crate::constants::layout::{ 
@@ -14,6 +14,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
+use core::marker::PhantomData;
 use lazy_static::*;
 use riscv::register::satp;
 
@@ -34,17 +35,17 @@ extern "C" {
 
 lazy_static! {
     /// a memory set instance through lazy_static! managing kernel space
-    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet>> =
+    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet<PageTableSv39>>> =
         Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
 }
 
 /// memory set structure, controls virtual-memory space
-pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+pub struct MemorySet<P: PageTable> {
+    page_table: P,
+    areas: Vec<MapArea<P>>,
 }
 
-impl MemorySet {
+impl<P> MemorySet<P> where P: PageTable {
     pub fn new_bare() -> Self {
         Self {
             page_table: PageTable::new(),
@@ -55,7 +56,7 @@ impl MemorySet {
         self.page_table.token()
     }
 
-    pub fn page_table(&self) -> &PageTable {
+    pub fn page_table(&self) -> &P {
         &self.page_table
     }
     /// Assume that no conflicts.
@@ -72,7 +73,7 @@ impl MemorySet {
     }
 
     /// 将内存区域 push 到页表中，并映射内存区域
-    fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
+    fn push(&mut self, mut map_area: MapArea<P>, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
             map_area.copy_data(&mut self.page_table, data);
@@ -169,7 +170,7 @@ impl MemorySet {
     }
 
     /// 创建用户态的 Guest Kernel 内存空间
-    pub fn create_user_guest_kernel(guest_kernel_memory: &MemorySet) -> Self {
+    pub fn create_user_guest_kernel(guest_kernel_memory: &Self) -> Self {
         let mut memory_set = Self::new_bare();
         // 代码段：可读可执行
         // 数据段：可读
@@ -180,7 +181,7 @@ impl MemorySet {
             user_area.map_perm |= MapPermission::U;
             // 均设置为不可写，以便陷入虚拟机
             // user_area.map_perm &= !MapPermission::W;
-            memory_set.push(user_area, None);
+            memory_set.push(user_area.clone(), None);
         }
         // 创建跳板页映射
         memory_set.map_trampoline();
@@ -277,7 +278,7 @@ impl MemorySet {
     }
 
     /// 加载客户操作系统
-    pub fn hyper_load_guest_kernel(&mut self, guest_kernel_memory: &MemorySet) {
+    pub fn hyper_load_guest_kernel(&mut self, guest_kernel_memory: &Self) {
         for area in guest_kernel_memory.areas.iter() {
             // 修改虚拟地址与物理地址相同
             let ppn_range = area.ppn_range.unwrap();
@@ -315,15 +316,16 @@ impl MemorySet {
 
 /// map area structure, controls a contiguous piece of virtual memory
 #[derive(Clone)]
-pub struct MapArea {
+pub struct MapArea<P: PageTable> {
     pub vpn_range: VPNRange,
     pub ppn_range: Option<PPNRange>,
     pub data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     pub map_type: MapType,
     pub map_perm: MapPermission,
+    _phantoma: PhantomData<P>
 }
 
-impl MapArea {
+impl<P> MapArea<P> where P: PageTable {
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -343,6 +345,7 @@ impl MapArea {
                 data_frames: BTreeMap::new(),
                 map_type,
                 map_perm,
+                _phantoma: PhantomData
             }
         }
         Self{
@@ -351,9 +354,10 @@ impl MapArea {
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
+            _phantoma: PhantomData
         }
     }
-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum, ppn_: Option<PhysPageNum>) {
+    pub fn map_one(&mut self, page_table: &mut P, vpn: VirtPageNum, ppn_: Option<PhysPageNum>) {
         let ppn: PhysPageNum;
         match self.map_type {
             // 线性映射
@@ -370,13 +374,13 @@ impl MapArea {
         page_table.map(vpn, ppn, pte_flags);
     }
     #[allow(unused)]
-    pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    pub fn unmap_one(&mut self, page_table: &mut P, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
         }
         page_table.unmap(vpn);
     }
-    pub fn map(&mut self, page_table: &mut PageTable) {
+    pub fn map(&mut self, page_table: &mut P) {
         let vpn_range = self.vpn_range;
         if let Some(ppn_range) = self.ppn_range {
             let ppn_start: usize = ppn_range.get_start().into();
@@ -401,14 +405,14 @@ impl MapArea {
         }
     }
     #[allow(unused)]
-    pub fn unmap(&mut self, page_table: &mut PageTable) {
+    pub fn unmap(&mut self, page_table: &mut P) {
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
     }
     /// data: start-aligned but maybe with shorter length
     /// assume that all frames were cleared before
-    pub fn copy_data(&mut self, page_table: &mut PageTable, data: &[u8]) {
+    pub fn copy_data(&mut self, page_table: &mut P, data: &[u8]) {
         assert_eq!(self.map_type, MapType::Framed);
         let mut start: usize = 0;
         let mut current_vpn = self.vpn_range.get_start();

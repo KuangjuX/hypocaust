@@ -1,9 +1,11 @@
 use crate::guest::GuestKernel;
 use crate::trap::TrapContext;
-use crate::page_table::VirtPageNum;
+use crate::page_table::{VirtPageNum, PageTable};
+
+use super::PageDebug;
 
 #[allow(unused)]
-pub fn print_guest_backtrace(guest: &GuestKernel, ctx: &TrapContext) {
+pub fn print_guest_backtrace<P: PageTable + PageDebug>(guest: &GuestKernel<P>, ctx: &TrapContext) {
     let pc = ctx.sepc;
     let mut ra = ctx.x[1];
     let mut sp = ctx.x[2];

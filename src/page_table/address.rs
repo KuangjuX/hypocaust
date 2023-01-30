@@ -163,7 +163,7 @@ impl VirtPageNum {
 
 impl PhysPageNum {
     /// 暂时的实现
-    pub fn get_pte_array_by_pgt(&self, pgt: Option<&PageTable>) -> &'static mut [PageTableEntry] {
+    pub fn get_pte_array_by_pgt<T: PageTable>(&self, pgt: Option<&T>) -> &'static mut [PageTableEntry] {
         let pa: PhysAddr = (*self).into();
         // hdebug!("pa: {:?}", pa);
         if let Some(pgt) = pgt {

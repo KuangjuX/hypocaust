@@ -1,100 +1,44 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
+use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable};
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
 use alloc::vec::Vec;
-use bitflags::*;
 
-bitflags! {
-    /// page table entry flags
-    pub struct PTEFlags: u8 {
-        const V = 1 << 0;
-        const R = 1 << 1;
-        const W = 1 << 2;
-        const X = 1 << 3;
-        const U = 1 << 4;
-        const G = 1 << 5;
-        const A = 1 << 6;
-        const D = 1 << 7;
-    }
-}
 
-#[derive(Copy, Clone, PartialEq, Debug)]
-#[repr(C)]
-/// page table entry structure
-pub struct PageTableEntry {
-    pub bits: usize,
-}
-
-impl PageTableEntry {
-    pub fn new(ppn: PhysPageNum, flags: PTEFlags) -> Self {
-        PageTableEntry {
-            bits: ppn.0 << 10 | flags.bits as usize,
-        }
-    }
-    pub fn empty() -> Self {
-        PageTableEntry { bits: 0 }
-    }
-    pub fn ppn(&self) -> PhysPageNum {
-        (self.bits >> 10 & ((1usize << 44) - 1)).into()
-    }
-    pub fn flags(&self) -> PTEFlags {
-        PTEFlags::from_bits(self.bits as u8).unwrap()
-    }
-    pub fn is_valid(&self) -> bool {
-        (self.flags() & PTEFlags::V) != PTEFlags::empty()
-    }
-    pub fn readable(&self) -> bool {
-        (self.flags() & PTEFlags::R) != PTEFlags::empty()
-    }
-    pub fn writable(&self) -> bool {
-        (self.flags() & PTEFlags::W) != PTEFlags::empty()
-    }
-    pub fn executable(&self) -> bool {
-        (self.flags() & PTEFlags::X) != PTEFlags::empty()
-    }
-
-    pub fn is_user(&self) -> bool {
-        (self.flags() & PTEFlags::U) != PTEFlags::empty()
-    }
-
-    pub fn is_global(&self) -> bool {
-        (self.flags() & PTEFlags::G) != PTEFlags::empty()
-    }
-}
 
 /// page table structure
-pub struct PageTable {
+#[derive(Clone)]
+pub struct PageTableSv39 {
     root_ppn: PhysPageNum,
     frames: Vec<FrameTracker>,
 }
 
 /// Assume that it won't oom when creating/mapping.
-impl PageTable {
-    pub fn new() -> Self {
+impl PageTable for PageTableSv39 {
+    fn new() -> Self {
         let frame = frame_alloc().unwrap();
-        PageTable {
+        PageTableSv39 {
             root_ppn: frame.ppn,
             frames: vec![frame],
         }
     }
     /// Temporarily used to get arguments from user space.
-    pub fn from_token(satp: usize) -> Self {
+    fn from_token(satp: usize) -> Self {
         Self {
             root_ppn: PhysPageNum::from(satp & ((1usize << 44) - 1)),
             frames: Vec::new(),
         }
     }
 
-    pub fn from_ppn(ppn: PhysPageNum) -> Self {
+    fn from_ppn(ppn: PhysPageNum) -> Self {
         Self {
             root_ppn: ppn,
             frames: Vec::new()
         }
     }
 
-    pub fn root_ppn(&self) -> PhysPageNum {
+    fn root_ppn(&self) -> PhysPageNum {
         self.root_ppn
     }
 
@@ -136,13 +80,13 @@ impl PageTable {
         result
     }
 
-    fn find_guest_pte(&self, vpn: VirtPageNum, pgt: &PageTable) -> Option<&mut PageTableEntry> {
+    fn find_guest_pte(&self, vpn: VirtPageNum, pgt: &Self) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
         for (i, idx) in idxs.iter().enumerate() {
             let pte;
-            if i == 0{ pte = &mut ppn.get_pte_array_by_pgt(None)[*idx]; }
+            if i == 0{ pte = &mut ppn.get_pte_array_by_pgt::<PageTableSv39>(None)[*idx]; }
             else{ pte = &mut ppn.get_pte_array_by_pgt(Some(pgt))[*idx]; }
             if i == 2 {
                 result = Some(pte);
@@ -157,19 +101,20 @@ impl PageTable {
     }
 
     #[allow(unused)]
-    pub fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
+    fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         let pte = self.find_pte_create(vpn).unwrap();
         assert!(!pte.is_valid(), "vpn {:?} is mapped before mapping", vpn);
         *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
     }
     #[allow(unused)]
-    pub fn unmap(&mut self, vpn: VirtPageNum) {
+    fn unmap(&mut self, vpn: VirtPageNum) {
         let pte = self.find_pte(vpn).unwrap();
         assert!(pte.is_valid(), "vpn {:?} is invalid before unmapping", vpn);
         *pte = PageTableEntry::empty();
     }
 
-    pub fn try_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
+    #[allow(unused)]
+    fn try_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
         match self.translate(vpn) {
             Some(pte) => {
                 if !pte.is_valid(){ self.map(vpn, ppn, flags) }
@@ -178,22 +123,23 @@ impl PageTable {
         }
     }
 
-    pub fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
+    fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
     }
 
-    pub fn translate_gvpn(&self, vpn: VirtPageNum, guest_pgt: &PageTable) -> Option<PageTableEntry> {
+    #[allow(unused)]
+    fn translate_gvpn(&self, vpn: VirtPageNum, guest_pgt: &Self) -> Option<PageTableEntry> {
         self.find_guest_pte(vpn, guest_pgt).map(|pte| *pte)
     }
 
-    pub fn token(&self) -> usize {
+    fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
     }
 }
 
 /// translate a pointer to a mutable u8 Vec through page table
 pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
-    let page_table = PageTable::from_token(token);
+    let page_table = PageTableSv39::from_token(token);
     let mut start = ptr as usize;
     let end = start + len;
     let mut v = Vec::new();

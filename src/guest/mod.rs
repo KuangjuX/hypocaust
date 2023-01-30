@@ -1,4 +1,5 @@
-use crate::page_table::{VirtAddr, PhysPageNum};
+use crate::debug::PageDebug;
+use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
 use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
 use crate::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START_1};
@@ -26,19 +27,19 @@ use self::pmap::PageTableRoot;
 
 
 lazy_static! {
-    pub static ref GUEST_KERNEL_MANAGER: GuestKernelManager = GuestKernelManager::new();
+    pub static ref GUEST_KERNEL_MANAGER: GuestKernelManager<PageTableSv39> = GuestKernelManager::new();
 }
 
-pub struct GuestKernelManager {
-    pub inner: UPSafeCell<GuestKernelManagerInner>
+pub struct GuestKernelManager<P: PageTable + PageDebug> {
+    pub inner: UPSafeCell<GuestKernelManagerInner<P>>
 }
 
-pub struct GuestKernelManagerInner {
-    pub kernels: Vec<GuestKernel>,
+pub struct GuestKernelManagerInner<P: PageTable + PageDebug> {
+    pub kernels: Vec<GuestKernel<P>>,
     pub run_id: usize
 }
 
-impl GuestKernelManager {
+impl<P> GuestKernelManager<P> where P: PageDebug + PageTable {
     pub fn new() -> Self {
         Self {
            inner: unsafe{
@@ -52,7 +53,7 @@ impl GuestKernelManager {
         }
     }
 
-    pub fn push(&self, kernel: GuestKernel) {
+    pub fn push(&self, kernel: GuestKernel<P>) {
         self.inner.exclusive_access().kernels.push(kernel)
     }
 }
@@ -99,12 +100,12 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 
 
 /// Guest Kernel 结构体
-pub struct GuestKernel {
+pub struct GuestKernel<P: PageTable + PageDebug> {
     /// guest kernel 内存映射，从 GPA -> HVA 转换
-    pub memory: MemorySet,
+    pub memory: MemorySet<P>,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
-    pub shadow_state: ShadowState,
+    pub shadow_state: ShadowState<P>,
     pub index: usize,
     /// Guest OS 是否运行在 S mode
     pub smode: bool,
@@ -112,8 +113,8 @@ pub struct GuestKernel {
     pub virt_device: VirtDevice
 }
 
-impl GuestKernel {
-    pub fn new(memory: MemorySet, index: usize) -> Self {
+impl<P> GuestKernel<P> where P: PageDebug + PageTable {
+    pub fn new(memory: MemorySet<P>, index: usize) -> Self {
         // 获取中断上下文的物理地址
         let trap_cx_ppn = memory
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
