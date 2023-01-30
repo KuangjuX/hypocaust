@@ -4,7 +4,7 @@ use riscv::addr::BitField;
 use riscv::register::{stval, scause, sscratch};
 
 use super::TrapContext;
-use crate::debug::{print_guest_backtrace, PageDebug};
+use crate::debug::PageDebug;
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
@@ -79,7 +79,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 let val = ctx.x[i.rs1() as usize];
                 if i.csr()  == crate::constants::csr::sepc as u32 && val == 0{
                     hdebug!("satp -> {:#x}", guest.shadow_state.csrs.satp);
-                    let spt = &guest.shadow_state.shadow_page_tables.find_shadow_page_table(guest.shadow_state.get_satp()).unwrap().page_table;
+                    let spt = &guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().page_table;
                     spt.print_trap_context();
                     // 打印 SPT
                     let root_vpn = VirtPageNum::from(guest.shadow_state.csrs.satp & 0xfff_ffff_ffff);
@@ -175,9 +175,9 @@ pub fn pfault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
         }
     }else{
         hdebug!("forward exception: sepc -> {:#x}, stval -> {:#x}, sscratch -> {:#x}", ctx.sepc, stval, sscratch::read());
-        print_guest_backtrace(guest, ctx);
+        panic!();
         // 转发到 Guest OS 处理
-        forward_exception(guest, ctx)
+        // forward_exception(guest, ctx)
     }
 }
 
@@ -204,6 +204,7 @@ pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
 
 /// 处理页表
 pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+    // hdebug!("sepc -> {:#x}", ctx.sepc);
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -216,7 +217,7 @@ pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mu
                 unsafe{
                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
                 }
-                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
+                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
             },
             riscv_decode::Instruction::Sb(i) => {
                 let rs1 = i.rs1() as usize;
@@ -227,7 +228,7 @@ pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mu
                 unsafe{
                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
                 }
-                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]});
+                guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
             }
             _ => panic!("sepc: {:#x}", ctx.sepc)
         }

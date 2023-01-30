@@ -132,7 +132,7 @@ impl PageTable for PageTableSv39 {
     }
 
     #[allow(unused)]
-    fn translate_gvpn(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry> {
+    fn translate_guest(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry> {
         self.find_guest_pte(vpn, hart_id).map(|pte| *pte)
     }
 

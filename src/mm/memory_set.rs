@@ -322,7 +322,7 @@ pub struct MapArea<P: PageTable> {
     pub data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     pub map_type: MapType,
     pub map_perm: MapPermission,
-    _phantoma: PhantomData<P>
+    _marker: PhantomData<P>
 }
 
 impl<P> MapArea<P> where P: PageTable {
@@ -345,7 +345,7 @@ impl<P> MapArea<P> where P: PageTable {
                 data_frames: BTreeMap::new(),
                 map_type,
                 map_perm,
-                _phantoma: PhantomData
+                _marker: PhantomData
             }
         }
         Self{
@@ -354,7 +354,7 @@ impl<P> MapArea<P> where P: PageTable {
             data_frames: BTreeMap::new(),
             map_type,
             map_perm,
-            _phantoma: PhantomData
+            _marker: PhantomData
         }
     }
     pub fn map_one(&mut self, page_table: &mut P, vpn: VirtPageNum, ppn_: Option<PhysPageNum>) {
