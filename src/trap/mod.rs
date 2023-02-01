@@ -22,7 +22,7 @@ use core::arch::{asm, global_asm};
 use riscv::register::{
     mtvec::TrapMode,
     scause::{self, Exception, Interrupt, Trap},
-    sie, stval, stvec, sepc
+    sie, stval, stvec, sepc, sscratch
 };
 pub use context::TrapContext;
 use self::fault::{pfault, ifault, timer_handler, maybe_forward_interrupt};
@@ -35,8 +35,14 @@ pub fn init() {
 }
 
 fn set_kernel_trap_entry() {
+    extern "C" {
+        fn __alltraps();
+        fn __alltraps_k();
+    }
+    let __alltraps_k_va = __alltraps_k as usize - __alltraps as usize + TRAMPOLINE;
     unsafe {
-        stvec::write(trap_from_kernel as usize, TrapMode::Direct);
+        stvec::write(__alltraps_k_va, TrapMode::Direct);
+        sscratch::write(trap_from_kernel as usize);
     }
 }
 
@@ -78,6 +84,7 @@ pub fn trap_handler() -> ! {
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
         | Trap::Exception(Exception::LoadPageFault) => {
+            // hdebug!("scause: {:?}", scause.cause());
             pfault(guest, ctx);
         }
         Trap::Exception(Exception::IllegalInstruction) => {
@@ -128,15 +135,14 @@ pub fn trap_return() -> ! {
 }
 
 #[no_mangle]
-/// Unimplement: traps/interrupts/exceptions from kernel mode
-/// Todo: Chapter 9: I/O device
-pub fn trap_from_kernel() -> ! {
+pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
+    // print_hypervisor_backtrace(_trap_cx);
     let scause= scause::read();
     let sepc = sepc::read();
     match scause.cause() {
         Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) | Trap::Exception(Exception::LoadPageFault)=> {
             let stval = stval::read();
-            panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), sepc, stval);
+            panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), _trap_cx.sepc, stval);
         },
         _ => { panic!("scause: {:?}, spec: {:#x}", scause.cause(), sepc)}
     }

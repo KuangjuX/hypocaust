@@ -21,7 +21,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
-pub use self::pmap::{ ShadowPageTables, ShadowPageTable, PageTableRoot, gpa2hpa, hpa2gpa };
+pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
 
 
 
@@ -157,7 +157,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             PageTableRoot::GPA => { self.memory.token() }
             PageTableRoot::GVA | PageTableRoot::UVA => { 
                 if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.get_satp()) {
-                    return spt.page_table.token()
+                    return spt.token()
                 }
                 panic!()
             }

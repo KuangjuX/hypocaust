@@ -35,7 +35,7 @@ impl PageTableEntry {
         (self.bits >> 10 & ((1usize << 44) - 1)).into()
     }
     pub fn flags(&self) -> PTEFlags {
-        PTEFlags::from_bits(self.bits as u8).unwrap()
+        PTEFlags::from_bits((self.bits & 0x3ff) as u8 ).unwrap()
     }
     pub fn is_valid(&self) -> bool {
         (self.flags() & PTEFlags::V) != PTEFlags::empty()

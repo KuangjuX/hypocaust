@@ -1,3 +1,4 @@
+use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::trap::TrapContext;
 use crate::page_table::{VirtPageNum, PageTable};
 
@@ -9,9 +10,6 @@ pub fn print_guest_backtrace<P: PageTable + PageDebug>(spt: &P, satp: usize, ctx
     let mut ra = ctx.x[1];
     let mut sp = ctx.x[2];
     let mut fp = ctx.x[8];
-    // hdebug!("pc -> {:#x}, ra -> {:#x}, sp -> {:#x}, fp -> {:#x}", pc, ra, sp, fp);
-    // let satp = guest.shadow_state.csrs.satp;
-    // let spt = guest.shadow_state.shadow_page_tables.find_shadow_page_table(satp).unwrap();
 
     let mut old_fp = 0;
     while old_fp != fp {
@@ -43,6 +41,39 @@ pub fn print_guest_backtrace<P: PageTable + PageDebug>(spt: &P, satp: usize, ctx
                         unsafe{ core::ptr::read(pa as *const usize) }
                     }
                     None => break
+                }
+            },
+            None => break,
+        };
+    }
+}
+
+#[allow(unused)]
+pub fn print_hypervisor_backtrace(ctx: &TrapContext) {
+    let mut ra = ctx.x[1];
+    let mut fp = ctx.x[8];
+    let mut old_fp = 0;
+    while old_fp != fp {
+        hdebug!("ra -> {:#x}", ra);
+        ra = match fp.checked_sub(8) {
+            Some(addr) => {
+                if (addr >= 0x8020_0000 && addr <= 0x8800_0000) || (addr >= TRAP_CONTEXT && addr <= TRAMPOLINE) {
+                    unsafe{ core::ptr::read(addr as *const usize) }
+                }else{
+                    break;
+                }
+            },
+            None => break,
+        };
+
+        old_fp = fp;
+
+        fp = match fp.checked_sub(16) {
+            Some(addr) => {
+                if (addr >= 0x8020_0000 && addr <= 0x8800_0000) || (addr >= TRAP_CONTEXT && addr <= TRAMPOLINE) {
+                    unsafe{ core::ptr::read(addr as *const usize) }
+                }else{
+                    break;
                 }
             },
             None => break,

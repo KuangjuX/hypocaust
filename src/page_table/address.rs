@@ -261,3 +261,5 @@ where
 /// a simple range structure for virtual page number
 pub type VPNRange = SimpleRange<VirtPageNum>;
 pub type PPNRange = SimpleRange<PhysPageNum>;
+#[allow(unused)]
+pub type PageRange = SimpleRange<usize>;

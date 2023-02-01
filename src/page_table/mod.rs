@@ -7,7 +7,7 @@ mod sv57;
 
 
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-pub use address::{StepByOne, VPNRange, PPNRange};
+pub use address::{StepByOne, VPNRange, PPNRange, PageRange};
 pub use sv39::{translated_byte_buffer, PageTableSv39};
 pub use pte::{PageTableEntry, PTEFlags};
 
