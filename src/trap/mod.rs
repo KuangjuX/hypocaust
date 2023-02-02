@@ -26,7 +26,7 @@ use riscv::register::{
     sie, stval, stvec, sepc, sscratch
 };
 pub use context::TrapContext;
-use self::fault::{ifault, timer_handler, maybe_forward_interrupt, forward_exception};
+use self::fault::{ifault, timer_handler, maybe_forward_interrupt};
 use self::page_fault::handle_page_fault;
 
 global_asm!(include_str!("trap.S"));
@@ -91,7 +91,8 @@ pub fn trap_handler() -> ! {
             // hdebug!("scause: {:?}", scause.cause());
             // pfault(guest, ctx);
             if !handle_page_fault(guest, ctx) {
-                forward_exception(guest, ctx);
+                panic!("forward exception");
+                // forward_exception(guest, ctx);
             }
         }
         Trap::Exception(Exception::IllegalInstruction) => {

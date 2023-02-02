@@ -74,6 +74,9 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
 
     pub fn push(&self, shadow_page_table: ShadowPageTableInfo<P>) {
         let inner = self.inner();
+        if inner.iter().position(|item| item.satp == shadow_page_table.satp).is_some() {
+            panic!("Duplicated satp");
+        }
         inner.push_back(shadow_page_table);
     }
 
@@ -117,29 +120,6 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         None
     }
 
-    // pub fn spt_by_vpn(&self, vpn: VirtPageNum) -> Option<&ShadowPageTableInfo<P>> {
-    //     let inner = self.inner();
-    //     for spt in inner.iter() {
-    //         // for v in spt.vpns {
-    //         //     if v == vpn { return Some(spt) }
-    //         // }
-
-    //         if spt.vpns.iter().position(|&v| v == vpn).is_some(){ return Some(spt)}
-    //     }
-    //     None
-    // }
-
-    // pub fn spt_by_vpn_mut(&self, vpn: VirtPageNum) -> Option<&mut ShadowPageTableInfo<P>> {
-    //     let inner = self.inner();
-    //     for spt in inner.iter_mut() {
-    //         // for v in spt.vpns {
-    //         //     if v == vpn { return Some(spt) }
-    //         // }
-    //         if spt.vpns.iter().position(|&v| v == vpn).is_some(){ return Some(spt)}
-    //     }
-    //     None
-    // }
-
 }
 
 pub fn gpa2hpa(va: usize, hart_id: usize) -> usize {
@@ -150,8 +130,8 @@ pub fn hpa2gpa(pa: usize, hart_id: usize) -> usize {
     pa - (hart_id + 1) * segment_layout::HART_SEGMENT_SIZE
 }
 
-pub fn gpt2spt(va: usize) -> usize {
-    va + segment_layout::SPT_OFFSET
+pub fn gpt2spt(va: usize, hart_id: usize) -> usize {
+    va + segment_layout::SPT_OFFSET + hart_id * segment_layout::HART_SEGMENT_SIZE
 }
 
 pub fn page_table_mode<P: PageTable>(page_table: P, hart_id: usize) -> PageTableRoot {
@@ -180,7 +160,7 @@ fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
 /// 用于初始化影子页表同步所有页表项(仅在最开始时使用)
 pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, mode: PageTableRoot, guest_spt: Option<&mut P>) -> Option<P> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
-    let host_root_pa = gpt2spt(guest_root_pa);
+    let host_root_pa = gpt2spt(guest_root_pa, hart_id);
     // 获取 `guest SPT`
     let mut empty_spt = P::from_token(0);
     let guest_spt = match mode {
@@ -202,7 +182,7 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
             let guest_page_table_vpn = queue.pop_front().unwrap();
             // 收集所有非叶子节点 `vpn`，用于设置为只读
             non_leaf_vpns.push(guest_page_table_vpn);
-            let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12) >> 12);
+            let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 的物理页号
             let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 页表项内容
@@ -214,7 +194,7 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
                     // 构造 host pte
-                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12) >> 12) , guest_pte.flags());
+                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags());
                     // hdebug!("[NONE LEAF PTE] host pte ppn -> {:#x}", host_pte.ppn().0);
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
@@ -347,6 +327,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
     pub fn synchronize_page_table(&mut self, va: usize, pte: PageTableEntry) {
         // 获取对应影子页表的地址
+        let hart_id = self.index;
         let host_pa = va + segment_layout::SPT_OFFSET;
         let host_ppn = PhysPageNum::from(host_pa >> 12);
         let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
@@ -354,7 +335,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // hdebug!("guest va -> {:#x}, host pa -> {:#x}", va, host_pa);
         if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
             // 叶子节点
-            let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, self.index) >> 12);
+            let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, hart_id) >> 12);
             let new_flags = pte.flags() | PTEFlags::U;
             // hdebug!("new_ppn: {:#x}, new_flags: {:?}", new_ppn.0, new_flags);
             let new_pte = PageTableEntry::new(new_ppn, new_flags);
@@ -364,7 +345,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         }else if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
             // 非叶子节点
             // 获取非叶子节点的偏移
-            let new_ppn = PhysPageNum::from(gpt2spt(pte.ppn().0 << 12) >> 12);
+            let new_ppn = PhysPageNum::from(gpt2spt(pte.ppn().0 << 12, hart_id) >> 12);
             let new_flags = pte.flags();
             let new_pte = PageTableEntry::new(new_ppn, new_flags);
             pte_array[index] = new_pte;

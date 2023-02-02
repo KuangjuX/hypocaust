@@ -55,7 +55,7 @@ make qemu
 - [x] Shadow page tables
 - [x] Synchronize guest page table & shadow page table
 - [x] Foward Expections & Interrupts
-- [ ] Update PTE accessed and dirty bits
+- [x] Update PTE accessed and dirty bits
 - [x] Timers
 - [ ] Expose and/or emulate peripherals
 - [ ] passthrough virtio block and networkd devices

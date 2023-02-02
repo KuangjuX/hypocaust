@@ -57,4 +57,12 @@ impl PageTableEntry {
     pub fn is_global(&self) -> bool {
         (self.flags() & PTEFlags::G) != PTEFlags::empty()
     }
+
+    pub fn dirty(&self) -> bool {
+        (self.flags() & PTEFlags::D) != PTEFlags::empty()
+    }
+
+    pub fn accessed(&self) -> bool {
+        (self.flags() & PTEFlags::A) != PTEFlags::empty()
+    }
 }
