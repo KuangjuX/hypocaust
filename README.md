@@ -27,8 +27,9 @@ make qemu
 | 0x80000000    | 0x80200000  | 0x80000000     | 0x80200000   |RustSBI        |
 | 0x80200000    | 0xC0000000  | 0x80200000     | 0x88000000   |hypervisor     |
 | 0x88000000    | 0x8FFFFFFF  | 0x88000000 | 0x8FFFFFFF | Guest Kernel 1   |
-| 0x90000000    | 0x97FFFFFFF  | 0x90000000 | 0x97FFFFFF | Guest Kernel 2   |
-| 0x98000000    | 0x9FFFFFFFF  | 0x98000000 | 0x9FFFFFFF | Guest Kernel 3   |
+| 0x90000000    | 0x97FFFFFF  | 0x90000000 | 0x97FFFFFF | Guest Kernel 2   |
+| 0x98000000    | 0x9FFFFFFF  | 0x98000000 | 0x9FFFFFFF | Guest Kernel 3   |
+| 0x100000000   | 0x17FFFFFFF | 0x100000000| 0x17FFFFFFF| Guest Kernel 1 Shadow Page Table |
 
 ### Resvered Memory Region
 | VA Start | VA End | Memory Region |

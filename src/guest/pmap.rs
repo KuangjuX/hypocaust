@@ -12,6 +12,7 @@ use super::GuestKernel;
 #[allow(unused)]
 mod segment_layout {
     pub const HART_SEGMENT_SIZE: usize = 128 * 1024 * 1024;
+    pub const SPT_OFFSET: usize = 0x10000_0000 - 0x8000_0000;
 }
 
 
@@ -27,9 +28,6 @@ pub enum PageTableRoot {
     UVA
 }
 
-// pub struct Rmap {
-//     pub rmap: BTreeMap<PhysPageNum, usize>
-// }
 
 pub struct ShadowPageTableInfo<P: PageTable + PageDebug> {
     pub mode: PageTableRoot,
@@ -262,7 +260,6 @@ pub fn update_page_table_readonly<P: PageTable>(hart_id: usize, guest_spt: &mut 
 
 
 pub fn update_page_table<P: PageTable>(hart_id: usize, addr: usize, spt: &mut P, gpt: &P, vpns: &mut Vec<VirtPageNum>) {
-    // User Spcae/Trap Context/Trampoline
     // 检查 spt 与 gpt 是否同步
     // 查看是否可以翻译 spt
     let vpn = VirtPageNum::from(addr >> 12);
@@ -288,6 +285,7 @@ pub fn update_page_table<P: PageTable>(hart_id: usize, addr: usize, spt: &mut P,
                         // 判断二者映射是否相同
                         if hppn != spte.ppn() {
                             // 二者不同，需要重新映射
+                            spt.unmap(vpn);
                             spt.map(vpn, hppn, flags);
                             if vpns.iter().position(|&item| item == vpn).is_none() {
                                 vpns.push(vpn);
