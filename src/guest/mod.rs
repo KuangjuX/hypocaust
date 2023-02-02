@@ -21,7 +21,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
-pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
+pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa, gpt2spt };
 
 
 

@@ -1,16 +1,13 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable};
+use super::pte::PteWrapper;
+use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel};
 use crate::guest::gpa2hpa;
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
 use alloc::vec::Vec;
 
 
-pub struct PageWalkSv39 {
-    pub path: [PageTableEntry; 3],
-    pub pa: usize
-}
 
 /// page table structure
 #[derive(Clone)]
@@ -143,6 +140,37 @@ impl PageTable for PageTableSv39 {
     fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
     }
+
+    fn walk_page_table<R: Fn(usize) -> usize>(root: usize, va: usize, read_pte: R) -> Option<super::PageWalk> {
+        let mut path = Vec::new();
+        let mut page_table = root;
+        for level in 0..3 {
+            let pte_index = (va >> (30 - 9 * level)) & 0x1ff;
+            let pte_addr = page_table + pte_index * 8;
+            let pte = read_pte(pte_addr);
+            let level = match level {
+                0 => PageTableLevel::Level1GB,
+                1 => PageTableLevel::Level2MB,
+                2 => PageTableLevel::Level4KB,
+                _ => unreachable!(),
+            };
+            let pte = PageTableEntry{ bits: pte};
+            path.push(PteWrapper{ addr: pte_addr, pte, level});
+
+            if !pte.is_valid() || (pte.writable() && !pte.readable()){ return None; }
+            else if pte.readable() | pte.executable() {
+                let pa = match level {
+                    PageTableLevel::Level4KB => ((pte.bits >> 10) << 12) | (va & 0xfff),
+                    PageTableLevel::Level2MB => ((pte.bits >> 19) << 21) | (va & 0x1fffff),
+                    PageTableLevel::Level1GB => ((pte.bits >> 28) << 30) | (va & 0x3fffffff),
+                };
+                return Some(super::PageWalk { path, pa});
+            }else{
+                page_table = (pte.bits >> 10) << 12;
+            }
+        }
+        None
+    }
 }
 
 /// translate a pointer to a mutable u8 Vec through page table
@@ -167,3 +195,6 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+
+

@@ -82,16 +82,14 @@ pub fn trap_handler() -> ! {
         Trap::Exception(Exception::Breakpoint) => { 
             ifault(guest, ctx);
         }
-        Trap::Exception(Exception::StoreFault)
-        | Trap::Exception(Exception::StorePageFault)
-        | Trap::Exception(Exception::LoadFault)
+        Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadPageFault) 
         | Trap::Exception(Exception::InstructionPageFault)
         => {
             // hdebug!("scause: {:?}", scause.cause());
             // pfault(guest, ctx);
             if !handle_page_fault(guest, ctx) {
-                panic!("forward exception");
+                panic!("forward exception, sepc -> {:#x}, stval -> {:#x}", ctx.sepc, stval::read());
                 // forward_exception(guest, ctx);
             }
         }

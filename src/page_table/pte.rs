@@ -1,6 +1,8 @@
 use bitflags::*;
 use crate::page_table::{PhysPageNum};
 
+use super::PageTableLevel;
+
 bitflags! {
     /// page table entry flags
     pub struct PTEFlags: u8 {
@@ -13,6 +15,13 @@ bitflags! {
         const A = 1 << 6;
         const D = 1 << 7;
     }
+}
+
+#[derive(Debug)]
+pub struct PteWrapper {
+    pub addr: usize,
+    pub pte: PageTableEntry,
+    pub level: PageTableLevel
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
