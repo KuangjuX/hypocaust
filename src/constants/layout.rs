@@ -11,6 +11,9 @@ pub const PAGE_SIZE_BITS: usize = 0xc;
 /// 每个内核拥有 128 M 的空间
 pub const KERNEL_SPACE: usize = 128 * 1024 * 1024;
 
+pub const SPT_PA_START_1: usize = 0x10000_0000;
+pub const SPT_PA_END_1: usize = SPT_PA_START_1 + KERNEL_SPACE;
+
 // 客户操作系统内存映射
 pub const GUEST_KERNEL_PHY_START_1: usize = 0x8800_0000;
 pub const GUEST_KERNEL_PHY_END_1: usize = 0x9000_0000;

@@ -31,6 +31,10 @@ pub trait PageTable: Clone {
     fn token(&self) -> usize;
 }
 
+// pub trait PageWalk {
+//     fn walk_page_table<R: Fn(usize) -> Option<usize>>(root: usize, va: usize, read_pte: R) -> Option<Self>;
+// }
+
 #[allow(unused)]
 pub enum PageError {
 

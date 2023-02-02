@@ -7,6 +7,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 
+pub struct PageWalkSv39 {
+    pub path: [PageTableEntry; 3],
+    pub pa: usize
+}
 
 /// page table structure
 #[derive(Clone)]

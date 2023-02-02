@@ -1,10 +1,10 @@
 
 
 use riscv::addr::BitField;
-use riscv::register::{stval, scause, sscratch};
+use riscv::register::{stval, scause};
 
 use super::TrapContext;
-use crate::debug::{PageDebug, print_guest_backtrace};
+use crate::debug::{PageDebug};
 use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
@@ -159,28 +159,28 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
 }
 
 
-/// 处理地址错误问题
-pub fn pfault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-    // 获取地址错信息
-    let stval = stval::read();
-    if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
-        // 处理地址错误
-        if guest.is_guest_page_table(stval) {
-            // 检测到 Guest OS 修改页表
-            handle_gpt(guest, ctx);
-        }else if guest.virt_device.qemu_virt_tester.in_region(stval) {
-            handle_qemu_virt(guest, ctx);
-        }else{
-            panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
-        }
-    }else{
-        hdebug!("forward exception: sepc -> {:#x}, stval -> {:#x}, sscratch -> {:#x}", ctx.sepc, stval, sscratch::read());
-        print_guest_backtrace(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, guest.shadow_state.get_satp(), ctx);
-        panic!();
-        // 转发到 Guest OS 处理
-        // forward_exception(guest, ctx)
-    }
-}
+// /// 处理地址错误问题
+// pub fn pfault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+//     // 获取地址错信息
+//     let stval = stval::read();
+//     if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
+//         // 处理地址错误
+//         if guest.is_guest_page_table(stval) {
+//             // 检测到 Guest OS 修改页表
+//             handle_gpt(guest, ctx);
+//         }else if guest.virt_device.qemu_virt_tester.in_region(stval) {
+//             handle_qemu_virt(guest, ctx);
+//         }else{
+//             panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
+//         }
+//     }else{
+//         hdebug!("forward exception: sepc -> {:#x}, stval -> {:#x}, sscratch -> {:#x}", ctx.sepc, stval, sscratch::read());
+//         print_guest_backtrace(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, guest.shadow_state.get_satp(), ctx);
+//         panic!();
+//         // 转发到 Guest OS 处理
+//         // forward_exception(guest, ctx)
+//     }
+// }
 
 
 
@@ -203,48 +203,48 @@ pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
     set_timer(next);
 }
 
-/// 处理页表
-pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-    // hdebug!("sepc -> {:#x}", ctx.sepc);
-    let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
-    if let Some(inst) = inst {
-        match inst {
-            riscv_decode::Instruction::Sd(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                let paddr = gpa2hpa(vaddr, guest.index);
-                unsafe{
-                    core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
-                }
-                // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
-                if ctx.x[rs2] != 0{
-                    // hdebug!("vaddr -> {:#x}, pte -> {:#x}", vaddr, ctx.x[rs2]);
-                    // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
-                    guest.synchronize_page_table(vaddr);
-                }
-            },
-            riscv_decode::Instruction::Sb(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                let paddr = gpa2hpa(vaddr, guest.index);
-                unsafe{
-                    core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
-                }
-                // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
-                if ctx.x[rs2] != 0{
-                    // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
-                    guest.synchronize_page_table(vaddr);
-                }
-            }
-            _ => panic!("sepc: {:#x}", ctx.sepc)
-        }
-    }
-    ctx.sepc += len;
-}
+// /// 处理页表
+// pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+//     // hdebug!("sepc -> {:#x}", ctx.sepc);
+//     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
+//     if let Some(inst) = inst {
+//         match inst {
+//             riscv_decode::Instruction::Sd(i) => {
+//                 let rs1 = i.rs1() as usize;
+//                 let rs2 = i.rs2() as usize;
+//                 let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
+//                 let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+//                 let paddr = gpa2hpa(vaddr, guest.index);
+//                 unsafe{
+//                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
+//                 }
+//                 // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
+//                 if ctx.x[rs2] != 0{
+//                     // hdebug!("vaddr -> {:#x}, pte -> {:#x}", vaddr, ctx.x[rs2]);
+//                     // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
+//                     guest.synchronize_page_table(vaddr);
+//                 }
+//             },
+//             riscv_decode::Instruction::Sb(i) => {
+//                 let rs1 = i.rs1() as usize;
+//                 let rs2 = i.rs2() as usize;
+//                 let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
+//                 let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
+//                 let paddr = gpa2hpa(vaddr, guest.index);
+//                 unsafe{
+//                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
+//                 }
+//                 // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
+//                 if ctx.x[rs2] != 0{
+//                     // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
+//                     guest.synchronize_page_table(vaddr);
+//                 }
+//             }
+//             _ => panic!("sepc: {:#x}", ctx.sepc)
+//         }
+//     }
+//     ctx.sepc += len;
+// }
 
 pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);

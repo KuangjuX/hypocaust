@@ -13,6 +13,7 @@
 //! to [`syscall()`].
 mod context;
 mod fault;
+mod page_fault;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
@@ -25,7 +26,8 @@ use riscv::register::{
     sie, stval, stvec, sepc, sscratch
 };
 pub use context::TrapContext;
-use self::fault::{pfault, ifault, timer_handler, maybe_forward_interrupt};
+use self::fault::{ifault, timer_handler, maybe_forward_interrupt, forward_exception};
+use self::page_fault::handle_page_fault;
 
 global_asm!(include_str!("trap.S"));
 
@@ -83,9 +85,14 @@ pub fn trap_handler() -> ! {
         Trap::Exception(Exception::StoreFault)
         | Trap::Exception(Exception::StorePageFault)
         | Trap::Exception(Exception::LoadFault)
-        | Trap::Exception(Exception::LoadPageFault) => {
+        | Trap::Exception(Exception::LoadPageFault) 
+        | Trap::Exception(Exception::InstructionPageFault)
+        => {
             // hdebug!("scause: {:?}", scause.cause());
-            pfault(guest, ctx);
+            // pfault(guest, ctx);
+            if !handle_page_fault(guest, ctx) {
+                forward_exception(guest, ctx);
+            }
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             ifault(guest, ctx);

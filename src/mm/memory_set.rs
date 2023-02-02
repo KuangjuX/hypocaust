@@ -7,7 +7,7 @@ use crate::page_table::{StepByOne, VPNRange, PPNRange};
 use crate::constants::layout::{ 
     PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT,  GUEST_KERNEL_PHY_START_1, 
     GUEST_KERNEL_VIRT_START, MEMORY_END, MMIO, 
-    GUEST_KERNEL_VIRT_END, GUEST_KERNEL_PHY_END_1
+    GUEST_KERNEL_VIRT_END, GUEST_KERNEL_PHY_END_1, SPT_PA_START_1, SPT_PA_END_1
 };
 use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
@@ -152,6 +152,20 @@ impl<P> MemorySet<P> where P: PageTable {
             ),
             None,
         );
+
+        // 影子页表映射区域
+        memory_set.push(
+            MapArea::new(
+                VirtAddr::from(SPT_PA_START_1),
+                VirtAddr::from(SPT_PA_END_1),
+                Some(PhysAddr::from(SPT_PA_START_1)),
+                Some(PhysAddr::from(SPT_PA_END_1)),
+                MapType::Linear,
+                MapPermission::R | MapPermission::W
+            ),
+            None
+        );
+
         for pair in MMIO {
             memory_set.push(
                 MapArea::new(
