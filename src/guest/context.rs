@@ -94,7 +94,10 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
      }
     pub fn write_scause(&mut self, val: usize)  { self.csrs.scause = val }
     pub fn write_stval(&mut self, val: usize) { self.csrs.stval  = val }
-    pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }
+    pub fn write_satp(&mut self, val: usize) { 
+        hdebug!("write satp: {:#x}", val);
+        self.csrs.satp = val 
+    }
     pub fn write_mtimecmp(&mut self, val: usize) { self.csrs.mtimecmp = val }
 
     /// ref: riscv-privileged
