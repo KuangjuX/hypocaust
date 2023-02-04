@@ -100,7 +100,6 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 
 /// Guest Kernel 结构体
 pub struct GuestKernel<P: PageTable + PageDebug> {
-    /// guest kernel 内存映射，从 GPA -> HVA 转换
     pub memory: MemorySet<P>,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
@@ -109,7 +108,7 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
     /// Guest OS 是否运行在 S mode
     pub smode: bool,
     /// Virtual emulated device in qemu
-    pub virt_device: VirtDevice
+    pub virt_device: VirtDevice,
 }
 
 impl<P> GuestKernel<P> where P: PageDebug + PageTable {
@@ -134,7 +133,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             shadow_state: ShadowState::new(),
             index,
             smode: true,
-            virt_device: VirtDevice::new()
+            virt_device: VirtDevice::new(), 
         };
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();

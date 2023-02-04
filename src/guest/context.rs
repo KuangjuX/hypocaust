@@ -39,7 +39,9 @@ pub struct ShadowState<P: PageTable + PageDebug> {
     /// 影子页表
     pub shadow_page_tables: ShadowPageTables<P>,
     /// 是否发生中断
-    pub interrupt: bool
+    pub interrupt: bool,
+    /// 连续切换页表次数
+    pub conseutive_satp_switch_count: usize
 }
 
 impl<P> ShadowState<P> where P: PageTable + PageDebug {
@@ -47,7 +49,8 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
         Self {
             csrs: ControlRegisters::new(),
             shadow_page_tables: ShadowPageTables::new(),
-            interrupt: false
+            interrupt: false,
+            conseutive_satp_switch_count: 0
         }
     }
 

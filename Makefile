@@ -20,9 +20,8 @@ BOOTLOADER	:= bootloader/rustsbi-qemu.bin
 
 KERNEL_ENTRY_PA := 0x80200000
 
-QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER)
+QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER) -nographic
 QEMUOPTS	+=-device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
-QEMUOPTS    +=-serial stdio
 
 
 

@@ -91,8 +91,8 @@ fn clear_bss() {
 pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
     if hart_id == 0{
         clear_bss();
-        println!("[hypervisor] Hello Hypocaust");
-        println!("[hypervisor] hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
+        hdebug!("Hello Hypocaust");
+        hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
         // 初始化堆及帧分配器
         hyp_alloc::heap_init();
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);

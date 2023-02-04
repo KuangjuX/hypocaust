@@ -83,8 +83,6 @@ pub fn trap_handler() -> ! {
             ifault(guest, ctx);
         }
         Trap::Exception(Exception::StorePageFault) => {
-            // hdebug!("scause: {:?}", scause.cause());
-            // pfault(guest, ctx);
             if !handle_page_fault(guest, ctx) {
                 htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
                 forward_exception(guest, ctx);
