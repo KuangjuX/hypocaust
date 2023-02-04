@@ -4,7 +4,7 @@ use core::cell::UnsafeCell;
 
 use crate::debug::{PageDebug};
 use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
-use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT, };
+use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT};
 use crate::mm::KERNEL_SPACE;
 
 use super::GuestKernel;
@@ -157,6 +157,88 @@ fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     }
 }
 
+/// 收集所有页表的虚拟页号
+pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec<VirtPageNum> {
+    let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
+
+    // 遍历所有页表项
+    let mut queue = VecDeque::new();
+    let mut buffer = Vec::new();
+    // 非叶子所在的虚拟页号
+    let mut non_leaf_vpns = Vec::new();
+    let vpn = VirtPageNum::from(guest_root_pa >> 12);
+    queue.push_back(vpn);
+
+    for walk in 0..3 {
+        // 遍历三级页表
+        while !queue.is_empty() {
+            // 获得 guest pte 的虚拟页号
+            let guest_page_table_vpn = queue.pop_front().unwrap();
+            // 收集所有非叶子节点 `vpn`，用于设置为只读
+            non_leaf_vpns.push(guest_page_table_vpn);
+            // 获得 guest pte 的物理页号
+            let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
+            // 获得 guest pte 页表项内容
+            let guest_ptes = guest_page_table_ppn.get_pte_array();
+            for guest_pte in guest_ptes.iter(){
+                if guest_pte.is_valid() && walk < 2 {
+                    // 非叶子页表项
+                    buffer.push(VirtPageNum::from(guest_pte.ppn().0));
+                }else if guest_pte.is_valid() && walk == 2 {
+                }
+            }
+        }
+        while !buffer.is_empty() {
+            queue.push_back(buffer.pop().unwrap());
+        }
+    }
+    non_leaf_vpns
+    
+}
+
+pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) {
+    let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
+
+    // 遍历所有页表项
+    let mut queue = VecDeque::new();
+    let mut buffer = Vec::new();
+    let vpn = VirtPageNum::from(guest_root_pa >> 12);
+    queue.push_back(vpn);
+
+    for walk in 0..3 {
+        // 遍历三级页表
+        while !queue.is_empty() {
+            // 获得 guest pte 的虚拟页号
+            let guest_page_table_vpn = queue.pop_front().unwrap();
+            // 收集所有非叶子节点 `vpn`，用于设置为只读
+            let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, hart_id) >> 12);
+            // 获得 guest pte 的物理页号
+            let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
+            // 获得 guest pte 页表项内容
+            let guest_ptes = guest_page_table_ppn.get_pte_array();
+            // 获得 host pte 页表项内容
+            let host_ptes = host_page_table_ppn.get_pte_array();
+            for (index, guest_pte) in guest_ptes.iter().enumerate() {
+                if guest_pte.is_valid() && walk < 2 {
+                    // 非叶子页表项
+                    buffer.push(VirtPageNum::from(guest_pte.ppn().0));
+                    // 构造 host pte
+                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags());
+                    // hdebug!("[NONE LEAF PTE] host pte ppn -> {:#x}", host_pte.ppn().0);
+                    host_ptes[index] = host_pte;
+                }else if guest_pte.is_valid() && walk == 2 {
+                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags() | PTEFlags::U);
+                    // hdebug!("[LEAF PTE] host pte ppn -> {:#x}", host_pte.ppn().0);
+                    host_ptes[index] = host_pte;
+                }
+            }
+        }
+        while !buffer.is_empty() {
+            queue.push_back(buffer.pop().unwrap());
+        }
+    }
+}
+
 /// 用于初始化影子页表同步所有页表项(仅在最开始时使用)
 pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, mode: PageTableRoot, guest_spt: Option<&mut P>) -> Option<P> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
@@ -277,14 +359,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
     pub fn make_shadow_page_table(&mut self, satp: usize) {
+        // 根据 satp 获取 guest kernel 根页表的物理地址
+        let hart_id = self.index;
+        let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
+        let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
+        let gpt = P::from_ppn(root_hppn);
         if self.shadow_state.shadow_page_tables.find_shadow_page_table(satp).is_none() {
             // 如果影子页表中没有发现，新建影子页表
-            // 根据 satp 获取 guest kernel 根页表的物理地址
-            let hart_id = self.index;
-            let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
-            let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
-            let gpt = P::from_ppn(root_hppn);
-
             let mut spt;
             let mode;
             // 根据页表是否可读内核地址空间判断是 `GVA` 还是 `UVA`
@@ -320,42 +401,114 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
             let spt_info = ShadowPageTableInfo::new(satp, spt, gpt, mode);
             self.shadow_state.shadow_page_tables.push(spt_info);
+        }else{
+            // 如果存在的话，根据 `guest page table` 更新 `guest os SPT` 只读项
+            let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
+            match page_table_mode(gpt.clone(), hart_id) {
+                PageTableRoot::GVA => {
+                    // 切换的页表为 `guest os page table`
+                    // 需要重新遍历所有页表项，并将其设置为只读
+                    let vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                    vpns.iter().for_each(|&vpn| {
+                        update_pte_readonly(vpn, guest_spt);
+                    });
+                    // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
+                },
+                PageTableRoot::UVA => {
+                    let vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                    vpns.iter().for_each(|&vpn| {
+                        update_pte_readonly(vpn, guest_spt);
+                    });
+                    // 需要更新用户态页表
+                    synchronize_page_table::<P>(hart_id, satp)
+                },
+                _ => unreachable!()
+            }
         }
     }
 
 
 
     pub fn synchronize_page_table(&mut self, va: usize, pte: PageTableEntry) {
-        // 获取对应影子页表的地址
         let hart_id = self.index;
-        let host_pa = va + segment_layout::SPT_OFFSET;
+        // 获取对应影子页表的地址
+        let host_pa = gpt2spt(va, hart_id);
         let host_ppn = PhysPageNum::from(host_pa >> 12);
-        let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
-        let pte_array = host_ppn.get_pte_array();
-        // hdebug!("guest va -> {:#x}, host pa -> {:#x}", va, host_pa);
-        if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
-            // 叶子节点
-            let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, hart_id) >> 12);
-            let new_flags = pte.flags() | PTEFlags::U;
-            // hdebug!("new_ppn: {:#x}, new_flags: {:?}", new_ppn.0, new_flags);
-            let new_pte = PageTableEntry::new(new_ppn, new_flags);
-            pte_array[index] = new_pte;
-            let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
-            update_pte_readonly(VirtPageNum::from(va >> 12), guest_spt);
-        }else if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
-            // 非叶子节点
-            // 获取非叶子节点的偏移
-            let new_ppn = PhysPageNum::from(gpt2spt(pte.ppn().0 << 12, hart_id) >> 12);
-            let new_flags = pte.flags();
-            let new_pte = PageTableEntry::new(new_ppn, new_flags);
-            pte_array[index] = new_pte;
-            // 将非叶子节点所在页面设置为只读
-            let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
-            update_pte_readonly(VirtPageNum::from(va >> 12), guest_spt);
-        }else{
-            // 无效, drop
-            pte_array[index] = PageTableEntry{bits: 0};
+        // 获得影子页表
+        let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
+        if va % core::mem::size_of::<PageTableEntry>() != 0 {
+            // 如果非页表项对齐，直接写到对应的影子页表地址
+            unsafe{ core::ptr::write(host_pa as *mut u8, pte.bits as u8) };
+            // 有可能在 drop 整个页表，判断整个页表，若全部为空，则将页表社会为可读写
+        }else if va % core::mem::size_of::<PageTableEntry>() == 0 && pte.bits == 0 {
+            // 页表项对齐且物理页号为 0, 写入 `u8`
+            unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
+            let mut drop = true;
+            let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
+            let guest_ptes = guest_ppn.get_pte_array();
+            for pte in guest_ptes{
+                if pte.bits != 0 {
+                    drop = false;
+                }
+            }
+            if drop {
+                htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
+                // 将影子页表设置为可读可写
+                if let Some(spt_pte) = guest_spt.find_pte(VirtPageNum::from(va >> 12)) {
+                    *spt_pte = PageTableEntry::new(spt_pte.ppn(), PTEFlags::R | PTEFlags::W | PTEFlags::U | PTEFlags::V);
+                }
+            }
+        }else {
+            // 如果页表项对齐且物理页号不为零表示进行页表映射
+            let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
+            let pte_array = host_ppn.get_pte_array();
+            // hdebug!("guest va -> {:#x}, host pa -> {:#x}", va, host_pa);
+            if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
+                // 叶子节点
+                let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, hart_id) >> 12);
+                let new_flags = pte.flags() | PTEFlags::U;
+                // hdebug!("new_ppn: {:#x}, new_flags: {:?}", new_ppn.0, new_flags);
+                let new_pte = PageTableEntry::new(new_ppn, new_flags);
+                pte_array[index] = new_pte;
+                let vpn = VirtPageNum::from(va >> 12);
+                if let Some(pte) = guest_spt.translate(vpn) {
+                    if pte.writable() | pte.executable() {
+                        htracking!("Allocate page table, ppn: {:#x}", vpn.0);
+                        update_pte_readonly(vpn, guest_spt);
+                    }
+                }else{
+                    panic!()
+                }
+
+            }else if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
+                // 非叶子节点
+                // 获取非叶子节点的偏移
+                let new_ppn = PhysPageNum::from(gpt2spt(pte.ppn().0 << 12, hart_id) >> 12);
+                let new_flags = pte.flags();
+                let new_pte = PageTableEntry::new(new_ppn, new_flags);
+                pte_array[index] = new_pte;
+                // 判断当前页面是否设置为只读
+                let vpn = VirtPageNum::from(va >> 12);
+                if let Some(pte) = guest_spt.translate(vpn) {
+                    if pte.writable() | pte.executable() {
+                        htracking!("Allocate page table, ppn: {:#x}", vpn.0);
+                        update_pte_readonly(vpn, guest_spt);
+                    }
+                }else{
+                    panic!()
+                }
+            }else{
+                // 无效, drop
+                // if pte.bits != 0 {
+                //     hwarning!("ppn: {:#x}, flags: {:?}", pte.ppn().0, pte.flags());
+                //     // print_guest_backtrace::<P>(&self.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, self.shadow_state.get_satp(), ctx);
+                //     assert_eq!(pte.bits, 0);
+                // }
+                // pte_array[index] = PageTableEntry{bits: 0};
+                panic!()
+            }
         }
+        
         // panic!()
     }
 

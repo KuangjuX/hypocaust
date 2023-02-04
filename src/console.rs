@@ -37,6 +37,21 @@ macro_rules! println {
 #[macro_export]
 macro_rules! hdebug {
     ($fmt: literal $(, $($arg: tt)+)?) => {
-        $crate::console::print(format_args!(concat!("[hypervisor] ", $fmt, "\n") $(, $($arg)+)?));
+        $crate::console::print(format_args!(concat!("[Hypervisor] ", $fmt, "\n") $(, $($arg)+)?));
     }
 }
+
+#[macro_export]
+macro_rules! hwarning {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::console::print(format_args!(concat!("[Warning] ", $fmt, "\n") $(, $($arg)+)?));
+    }
+}
+
+#[macro_export]
+macro_rules! htracking {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::console::print(format_args!(concat!("[Tracking] ", $fmt, "\n") $(, $($arg)+)?));
+    }
+}
+
