@@ -39,9 +39,6 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                         let c = console_getchar();
                         ctx.x[10] = c;
                     }
-                    1000 => {
-                        ebreak();
-                    }
                     _ => {
                         // hdebug!("forward exception: sepc -> {:#x}", ctx.sepc);
                         forward_exception(guest, ctx);
@@ -157,30 +154,6 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
     };
     (len, riscv_decode::decode(inst).ok())
 }
-
-
-// /// 处理地址错误问题
-// pub fn pfault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-//     // 获取地址错信息
-//     let stval = stval::read();
-//     if let Some(_) = guest.translate_valid_guest_vaddr(stval) {
-//         // 处理地址错误
-//         if guest.is_guest_page_table(stval) {
-//             // 检测到 Guest OS 修改页表
-//             handle_gpt(guest, ctx);
-//         }else if guest.virt_device.qemu_virt_tester.in_region(stval) {
-//             handle_qemu_virt(guest, ctx);
-//         }else{
-//             panic!(" stval -> {:#x}  sepc -> {:#x} cause -> {:?}", stval, ctx.sepc, scause::read().cause());
-//         }
-//     }else{
-//         hdebug!("forward exception: sepc -> {:#x}, stval -> {:#x}, sscratch -> {:#x}", ctx.sepc, stval, sscratch::read());
-//         print_guest_backtrace(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, guest.shadow_state.get_satp(), ctx);
-//         panic!();
-//         // 转发到 Guest OS 处理
-//         // forward_exception(guest, ctx)
-//     }
-// }
 
 
 

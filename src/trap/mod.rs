@@ -86,7 +86,7 @@ pub fn trap_handler() -> ! {
             // hdebug!("scause: {:?}", scause.cause());
             // pfault(guest, ctx);
             if !handle_page_fault(guest, ctx) {
-                // panic!("forward exception");
+                htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
                 forward_exception(guest, ctx);
             }
         }

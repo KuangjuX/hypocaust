@@ -62,11 +62,6 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
         }
         let pte = PageTableEntry{ bits: pte };       
         let guest_pte_addr = gpa2hpa(guest_va, guest.index);
-        // if pte.ppn().0 == 0 {
-        //     unsafe{core::ptr::write(guest_pte_addr as *mut u8, pte.bits as u8)}
-        // }else{
-        //     unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
-        // }
         unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
 
         guest.synchronize_page_table(guest_va, pte);

@@ -157,6 +157,22 @@ fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     }
 }
 
+fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
+    let mut drop = true;
+    let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
+    let guest_ptes = guest_ppn.get_pte_array();
+    guest_ptes.iter().for_each(|&pte| { 
+        if pte.bits != 0 { drop = false; }
+    });
+    if drop {
+        // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
+        // 将影子页表设置为可读可写
+        if let Some(spt_pte) = spt.find_pte(VirtPageNum::from(va >> 12)) {
+            *spt_pte = PageTableEntry::new(spt_pte.ppn(), PTEFlags::R | PTEFlags::W | PTEFlags::U | PTEFlags::V);
+        }
+    }
+}
+
 /// 收集所有页表的虚拟页号
 pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec<VirtPageNum> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
@@ -408,15 +424,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 PageTableRoot::GVA => {
                     // 切换的页表为 `guest os page table`
                     // 需要重新遍历所有页表项，并将其设置为只读
-                    let vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                    vpns.iter().for_each(|&vpn| {
+                    collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
                 },
                 PageTableRoot::UVA => {
-                    let vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                    vpns.iter().for_each(|&vpn| {
+                    collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
                     // 需要更新用户态页表
@@ -443,21 +457,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         }else if va % core::mem::size_of::<PageTableEntry>() == 0 && pte.bits == 0 {
             // 页表项对齐且物理页号为 0, 写入 `u8`
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
-            let mut drop = true;
-            let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
-            let guest_ptes = guest_ppn.get_pte_array();
-            for pte in guest_ptes{
-                if pte.bits != 0 {
-                    drop = false;
-                }
-            }
-            if drop {
-                htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
-                // 将影子页表设置为可读可写
-                if let Some(spt_pte) = guest_spt.find_pte(VirtPageNum::from(va >> 12)) {
-                    *spt_pte = PageTableEntry::new(spt_pte.ppn(), PTEFlags::R | PTEFlags::W | PTEFlags::U | PTEFlags::V);
-                }
-            }
+            // 消除页表映射，将页表内存修改为可读可写
+            clear_page_table(guest_spt, va, hart_id);
         }else {
             // 如果页表项对齐且物理页号不为零表示进行页表映射
             let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
@@ -495,17 +496,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                         update_pte_readonly(vpn, guest_spt);
                     }
                 }else{
-                    panic!()
+                    unreachable!()
                 }
             }else{
-                // 无效, drop
-                // if pte.bits != 0 {
-                //     hwarning!("ppn: {:#x}, flags: {:?}", pte.ppn().0, pte.flags());
-                //     // print_guest_backtrace::<P>(&self.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, self.shadow_state.get_satp(), ctx);
-                //     assert_eq!(pte.bits, 0);
-                // }
-                // pte_array[index] = PageTableEntry{bits: 0};
-                panic!()
+                unreachable!()
             }
         }
         
