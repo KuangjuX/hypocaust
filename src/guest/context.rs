@@ -1,3 +1,13 @@
+use riscv::addr::BitField;
+
+
+use crate::trap::trap_return;
+use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT};
+use crate::page_table::PageTable;
+use crate::debug::PageDebug;
+use super::pmap::ShadowPageTables;
+
+
 pub struct ControlRegisters {
     // sedeleg: usize, -- Hard-wired to zero
     // sideleg: usize, -- Hard-wired to zero
@@ -54,51 +64,8 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
         }
     }
 
-    pub fn get_sstatus(&self) -> usize { self.csrs.sstatus }
-    pub fn get_stvec(&self) -> usize { self.csrs.stvec }
-    pub fn get_sie(&self) -> usize { self.csrs.sie }
-    pub fn get_sscratch(&self) -> usize { self.csrs.sscratch }
-    pub fn get_sepc(&self) -> usize { self.csrs.sepc }
-    pub fn get_scause(&self) -> usize { self.csrs.scause }
-    pub fn get_stval(&self) -> usize { self.csrs.stval }
-    pub fn get_satp(&self) -> usize { self.csrs.satp }
-    pub fn get_mtimecmp(&self) -> usize { self.csrs.mtimecmp }
 
-    pub fn write_sstatus(&mut self, val: usize) { 
-        if val.get_bit(STATUS_SIE_BIT) {
-            // Enabling interruots might casue one to happen right away
-            self.interrupt = true;
-        }
-        self.csrs.sstatus  = val
-    }
-    pub fn write_stvec(&mut self, val: usize) { self.csrs.stvec = val }
-    pub fn write_sie(&mut self, val: usize) { 
-        let value = val & (SEIE | STIE | SSIE);
-        if !self.csrs.sie & value != 0{
-            self.interrupt = true;
-        }
-        if value.get_bit(STIE_BIT) {
-            unsafe{ riscv::register::sie::set_stimer() };
-        }
-        self.csrs.sie = val;
-    }
-    pub fn write_sip(&mut self, val: usize) {
-        if val & SSIP != 0 {
-            self.interrupt = true;
-        }
-        self.csrs.sip = (self.csrs.sip & !SSIP) | (val & SSIP);
-    }
-    pub fn write_sscratch(&mut self, val: usize) { self.csrs.sscratch = val }
-    pub fn write_sepc(&mut self, val: usize) { 
-        if val == 0 {
-            panic!("current sepc -> {:#x}", self.csrs.sepc) 
-        }
-        self.csrs.sepc = val
-     }
-    pub fn write_scause(&mut self, val: usize)  { self.csrs.scause = val }
-    pub fn write_stval(&mut self, val: usize) { self.csrs.stval  = val }
-    pub fn write_satp(&mut self, val: usize) { self.csrs.satp = val }
-    pub fn write_mtimecmp(&mut self, val: usize) { self.csrs.mtimecmp = val }
+    
 
     /// ref: riscv-privileged
     /// The `SPIE` bit indicates whether supervisor interrupts were enabled prior to
@@ -132,11 +99,7 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
 
 
 
-use riscv::addr::BitField;
 
-use crate::{trap::{trap_return}, constants::csr::{status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT}, sie::{SEIE, STIE, SSIE, STIE_BIT}, sip::SSIP}, page_table::PageTable, debug::PageDebug};
-
-use super::{pmap::ShadowPageTables};
 
 
 #[repr(C)]

@@ -1,3 +1,6 @@
+use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
+use crate::constants::csr::sip::SSIP;
+use crate::constants::csr::status::STATUS_SIE_BIT;
 use crate::debug::PageDebug;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
 use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
@@ -14,6 +17,7 @@ mod virtdevice;
 
 use context::TaskContext;
 use alloc::vec::Vec;
+use riscv::addr::BitField;
 use switch::__switch;
 use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
@@ -84,7 +88,7 @@ pub fn current_user_token() -> usize {
 
 pub fn current_trap_context_ppn() -> PhysPageNum {
     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-    let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory;
+    let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory_set;
     let trap_context: VirtAddr = TRAP_CONTEXT.into();
     let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
     trap_context_ppn
@@ -100,7 +104,7 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 
 /// Guest Kernel 结构体
 pub struct GuestKernel<P: PageTable + PageDebug> {
-    pub memory: MemorySet<P>,
+    pub memory_set: MemorySet<P>,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState<P>,
@@ -112,9 +116,9 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
 }
 
 impl<P> GuestKernel<P> where P: PageDebug + PageTable {
-    pub fn new(memory: MemorySet<P>, index: usize) -> Self {
+    pub fn new(memory_set: MemorySet<P>, index: usize) -> Self {
         // 获取中断上下文的物理地址
-        let trap_cx_ppn = memory
+        let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()
             .ppn();
@@ -127,7 +131,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             MapPermission::R | MapPermission::W,
         );
         let mut guest_kernel = Self { 
-            memory,
+            memory_set,
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
@@ -138,7 +142,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();
         sstatus.set_spp(riscv::register::sstatus::SPP::Supervisor);
-        guest_kernel.shadow_state.write_sstatus(sstatus.bits());
+        guest_kernel.shadow_state.csrs.sstatus = sstatus.bits();
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();
         *trap_cx = TrapContext::app_init_context(
@@ -153,9 +157,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
     pub fn get_user_token(&self) -> usize {
         match self.shadow() {
-            PageTableRoot::GPA => { self.memory.token() }
+            PageTableRoot::GPA => { self.memory_set.token() }
             PageTableRoot::GVA | PageTableRoot::UVA => { 
-                if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.get_satp()) {
+                if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.csrs.satp) {
                     return spt.token()
                 }
                 panic!()
@@ -165,7 +169,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
     /// 用来检查应当使用哪一级的影子页表
     pub fn shadow(&self) -> PageTableRoot {
-        if (self.shadow_state.get_satp() >> 60) & 0xf == 0 {
+        if (self.shadow_state.csrs.satp >> 60) & 0xf == 0 {
             PageTableRoot::GPA
         }else if !self.shadow_state.smode() {
             PageTableRoot::UVA
@@ -174,51 +178,65 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         }
     }
 
-    /// STEP:
-    /// 1. VMM intercepts guest OS setting the virtual satp
-    /// 2. VMM iterates over the guest page table, constructs a corresponding shadow page table
-    /// 3. In shadow PT, every guest physical address is translated into host virtual address(machine address)
-    /// 4. Finally, VMM sets the real satp to point to the shadow page table
-    pub fn satp_handler(&mut self, satp: usize, sepc: usize) {
-        if satp == 0 { panic!("sepc -> {:#x}", sepc); }
-        match (satp >> 60) & 0xf {
-            0 => { self.write_shadow_csr(csr::satp, satp)}
-            8 => {
-                // 获取 guest kernel 
-                self.write_shadow_csr(csr::satp, satp);
-                self.make_shadow_page_table(satp);
-            }
-            _ => { panic!("Atttempted to install page table with unsupported mode") }
-        } 
-    }
-
-    pub fn read_shadow_csr(&self, csr: usize) -> usize {
+    pub fn get_csr(&self, csr: usize) -> usize {
         let shadow_state = &self.shadow_state;
         match csr {
-            csr::sstatus => { shadow_state.get_sstatus() }
-            csr::stvec => { shadow_state.get_stvec() }
-            csr::sie => { shadow_state.get_sie() }
-            csr::sscratch => { shadow_state.get_sscratch() }
-            csr::sepc => { shadow_state.get_sepc() }
-            csr::scause => { shadow_state.get_scause() }
-            csr::stval => { shadow_state.get_stval() }
-            csr::satp => { shadow_state.get_satp() }
-            _ => { panic!("[hypervisor] Unrecognized") }
+            csr::sstatus => shadow_state.csrs.sstatus,
+            csr::stvec => shadow_state.csrs.stvec,
+            csr::sie => shadow_state.csrs.sie,
+            csr::sscratch => shadow_state.csrs.sscratch,
+            csr::sepc => shadow_state.csrs.sepc,
+            csr::scause => shadow_state.csrs.scause,
+            csr::stval => shadow_state.csrs.stval,
+            csr::satp => shadow_state.csrs.satp,
+            _ => unreachable!(),
         }
     }
 
-    pub fn write_shadow_csr(&mut self, csr: usize, val: usize) {
+    pub fn set_csr(&mut self, csr: usize, val: usize) {
         let shadow_state = &mut self.shadow_state;
         match csr {
-            csr::sstatus => { shadow_state.write_sstatus(val) }
-            csr::stvec => { shadow_state.write_stvec(val) }
-            csr::sie => { shadow_state.write_sie(val) }
-            csr::sscratch => { shadow_state.write_sscratch(val) }
-            csr::sepc => { shadow_state.write_sepc(val);}
-            csr::scause => { shadow_state.write_scause(val) }
-            csr::stval => { shadow_state.write_stval(val) }
-            csr::satp => { shadow_state.write_satp(val) }
-            _ => { panic!("[hypervisor] Unrecognized") }
+            csr::sstatus => { 
+                if val.get_bit(STATUS_SIE_BIT) {
+                    // Enabling interruots might casue one to happen right away
+                    shadow_state.interrupt = true;
+                }
+                shadow_state.csrs.sstatus  = val
+             }
+            csr::stvec => shadow_state.csrs.stvec = val,
+            csr::sie => { 
+                let value = val & (SEIE | STIE | SSIE);
+                if !shadow_state.csrs.sie & value != 0{
+                    shadow_state.interrupt = true;
+                }
+                if value.get_bit(STIE_BIT) {
+                    unsafe{ riscv::register::sie::set_stimer() };
+                }
+                shadow_state.csrs.sie = val;
+            }
+            csr::sip => {
+                if val & SSIP != 0 {
+                    shadow_state.interrupt = true;
+                }
+                shadow_state.csrs.sip = (shadow_state.csrs.sip & !SSIP) | (val & SSIP);
+            }
+            csr::sscratch => shadow_state.csrs.sscratch = val,
+            csr::sepc => shadow_state.csrs.sepc = val,
+            csr::scause => shadow_state.csrs.scause = val,
+            csr::stval => shadow_state.csrs.stval = val,
+            csr::satp => { 
+                let satp = val;
+                match (satp >> 60) & 0xf {
+                    0 => shadow_state.csrs.satp = satp, 
+                    8 => {
+                        // 获取 guest kernel 
+                        shadow_state.csrs.satp = satp;
+                        self.make_shadow_page_table(satp);
+                    }
+                    _ => panic!("Install page table with unsupported mode?") 
+                }
+            }
+            _ => unreachable!()
         }
     }
     

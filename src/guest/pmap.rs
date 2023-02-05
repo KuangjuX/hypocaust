@@ -344,11 +344,11 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     }
 
     pub fn translate_guest_ppte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.memory.translate(vpn)
+        self.memory_set.translate(vpn)
     }
 
     pub fn translate_guest_vpte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        if let Some(info) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.get_satp()) {
+        if let Some(info) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.csrs.satp) {
             // 由于 GHA 与 GPA 是同等映射的，因此翻译成的物理地址可以直接当虚拟地址用
             let pte = info.spt.translate(vpn);
             pte
@@ -386,7 +386,6 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 PageTableRoot::GVA => {
                     // 将 mode 设置为 `GVA`
                     mode = PageTableRoot::GVA;
-                    // 
                     spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
                 }
                 PageTableRoot::UVA => {
@@ -484,12 +483,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             // 如果页表项对齐且物理页号不为零表示进行页表映射
             let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
             let pte_array = host_ppn.get_pte_array();
-            // hdebug!("guest va -> {:#x}, host pa -> {:#x}", va, host_pa);
             if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
                 // 叶子节点
                 let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, hart_id) >> 12);
                 let new_flags = pte.flags() | PTEFlags::U;
-                // hdebug!("new_ppn: {:#x}, new_flags: {:?}", new_ppn.0, new_flags);
                 let new_pte = PageTableEntry::new(new_ppn, new_flags);
                 pte_array[index] = new_pte;
                 let vpn = VirtPageNum::from(va >> 12);

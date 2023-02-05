@@ -27,7 +27,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 match ctx.x[17]  {
                     SBI_SET_TIMER => {
                         let stime = ctx.x[10];
-                        guest.shadow_state.write_mtimecmp(stime);
+                        guest.shadow_state.csrs.mtimecmp = stime;
                         set_timer(stime);
                         guest.shadow_state.csrs.sip.set_bit(STIP_BIT, false);
                     }
@@ -53,9 +53,9 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
-                let val = guest.read_shadow_csr(csr);
+                let val = guest.get_csr(csr);
                 if mask != 0 {
-                    guest.write_shadow_csr(csr, val & !mask);
+                    guest.set_csr(csr, val & !mask);
                 }
                 ctx.x[rd] = val;
             }
@@ -63,47 +63,44 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
-                let val = guest.read_shadow_csr(csr);
+                let val = guest.get_csr(csr);
                 if mask != 0 {
-                    guest.write_shadow_csr(csr, val | mask);
+                    guest.set_csr(csr, val | mask);
                 }
                 ctx.x[rd] = val;
             }
             // 写 CSR 指令
             riscv_decode::Instruction::Csrrw(i) => {
-                let prev = guest.read_shadow_csr(i.csr() as usize);
+                let prev = guest.get_csr(i.csr() as usize);
                 // 向 Shadow CSR 写入
                 let val = ctx.x[i.rs1() as usize];
-                match i.csr() as usize {
-                    crate::constants::csr::satp => { guest.satp_handler(val, ctx.sepc) },
-                    _ => { guest.write_shadow_csr(i.csr() as usize, val); }
-                }
+                guest.set_csr(i.csr() as usize, val);
                 ctx.x[i.rd() as usize] = prev;
             },
             riscv_decode::Instruction::Csrrwi(i) => {
-                let prev = guest.read_shadow_csr(i.csr() as usize);
-                guest.write_shadow_csr(i.csr() as usize, i.zimm() as usize);
+                let prev = guest.get_csr(i.csr() as usize);
+                guest.set_csr(i.csr() as usize, i.zimm() as usize);
                 ctx.x[i.rd() as usize] = prev;
             }
             riscv_decode::Instruction::Csrrsi(i) => {
-                let prev = guest.read_shadow_csr(i.csr() as usize);
+                let prev = guest.get_csr(i.csr() as usize);
                 let mask = i.zimm() as usize;
                 if mask != 0 {
-                    guest.write_shadow_csr(i.csr() as usize, prev | mask);
+                    guest.set_csr(i.csr() as usize, prev | mask);
                 }
                 ctx.x[i.rd() as usize] = prev;
             },
             riscv_decode::Instruction::Csrrci(i) => {
-                let prev = guest.read_shadow_csr(i.csr() as usize);
+                let prev = guest.get_csr(i.csr() as usize);
                 let mask = i.zimm() as usize;
                 if mask != 0 {
-                    guest.write_shadow_csr(i.csr() as usize, prev & !mask);
+                    guest.set_csr(i.csr() as usize, prev & !mask);
                 }
                 ctx.x[i.rd() as usize] = prev;
             }
             riscv_decode::Instruction::Sret => {
                 guest.shadow_state.pop_sie();
-                ctx.sepc = guest.read_shadow_csr(crate::constants::csr::sepc);
+                ctx.sepc = guest.get_csr(crate::constants::csr::sepc);
                 guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
                 if !guest.shadow_state.smode() {
                     guest.shadow_state.interrupt = true;
@@ -147,14 +144,14 @@ pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
     let time = get_time();
     let mut next = time + get_default_timer();
     if guest.shadow_state.csrs.sie.get_bit(STIE_BIT) {
-        if guest.shadow_state.get_mtimecmp() <= time {
+        if guest.shadow_state.csrs.mtimecmp <= time {
             // 表明此时 Guest OS 发生中断
             guest.shadow_state.interrupt = true;
             // 设置 sip 寄存器
             guest.shadow_state.csrs.sip.set_bit(STIP_BIT, true);
         }else{
             // 未发生中断，设置下次中断
-            next = next.min(guest.shadow_state.get_mtimecmp())
+            next = next.min(guest.shadow_state.csrs.mtimecmp)
         }
     }
     // 设置下次中断
@@ -183,12 +180,12 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ct
 /// 向 guest kernel 转发异常
 pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let state = &mut guest.shadow_state;
-    state.write_scause(scause::read().code());
-    state.write_sepc(ctx.sepc);
-    state.write_stval(stval::read());
+    state.csrs.scause = scause::read().code();
+    state.csrs.sepc = ctx.sepc;
+    state.csrs.stval = stval::read();
     // 设置 sstatus 指向 S mode
     state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
-    ctx.sepc = state.get_stvec();
+    ctx.sepc = state.csrs.stvec;
     // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
     match guest.shadow_state.smode() {
         true => {},
@@ -202,19 +199,20 @@ pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel
     if !guest.shadow_state.interrupt || in_guest(ctx.sepc) { return }
     let state = &mut guest.shadow_state;
     // 当前状态处于用户态，且开启中断并有中断正在等待
-    if (!state.smode() && state.get_sstatus().get_bit(STATUS_SIE_BIT)) && (state.get_sie() & state.csrs.sip != 0) {
+    if (!state.smode() && state.csrs.sstatus.get_bit(STATUS_SIE_BIT)) && (state.csrs.sie & state.csrs.sip != 0) {
         // hdebug!("forward timer interrupt: sepc -> {:#x}", ctx.sepc);
         let cause = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
         else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
         else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
         else{ unreachable!() };
-        state.write_scause((1 << 63) | cause);
-        state.write_stval(0);
-        state.write_sepc(ctx.sepc);
+
+        state.csrs.scause = (1 << 63) | cause;
+        state.csrs.stval = 0;
+        state.csrs.sepc = ctx.sepc;
         state.push_sie();
         // 设置 sstatus 指向 S mode
         state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
-        ctx.sepc = state.get_stvec();
+        ctx.sepc = state.csrs.stvec;
     }else{
         state.interrupt = false;
     }
