@@ -12,8 +12,10 @@
 //! was. For example, timer interrupts trigger task preemption, and syscalls go
 //! to [`syscall()`].
 mod context;
-mod fault;
+mod inst_fault;
 mod page_fault;
+mod device;
+mod forward;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
@@ -26,10 +28,14 @@ use riscv::register::{
     sie, stval, stvec, sepc, sscratch
 };
 pub use context::TrapContext;
-use self::fault::{ifault, timer_handler, maybe_forward_interrupt, forward_exception};
+use self::inst_fault::{ifault, decode_instruction_at_address};
 use self::page_fault::handle_page_fault;
+use self::device::{ handle_qemu_virt, handle_time_interrupt };
+use self::forward::{forward_exception, maybe_forward_interrupt};
 
 global_asm!(include_str!("trap.S"));
+
+
 
 /// initialize CSR `stvec` as the entry of `__alltraps`
 pub fn init() {
@@ -92,7 +98,7 @@ pub fn trap_handler() -> ! {
             ifault(guest, ctx);
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
-            timer_handler(guest);
+            handle_time_interrupt(guest);
             // 可能转发中断
             maybe_forward_interrupt(guest, ctx);
         },

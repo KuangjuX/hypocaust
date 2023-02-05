@@ -3,7 +3,7 @@ use riscv::register::stval;
 use crate::page_table::{PageTable,  PageTableEntry};
 use crate::debug::{PageDebug, print_guest_backtrace};
 use crate::guest::{GuestKernel, gpa2hpa, PageTableRoot};
-use crate::trap::fault::{decode_instruction_at_address, handle_qemu_virt}; 
+use super::{ decode_instruction_at_address, handle_qemu_virt}; 
 
 use super::TrapContext;
 

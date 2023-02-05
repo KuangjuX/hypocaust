@@ -1,22 +1,18 @@
 
 
 use riscv::addr::BitField;
-use riscv::register::{stval, scause};
+use riscv::register::scause;
 
 use super::TrapContext;
-use crate::debug::{PageDebug};
-use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
-use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
-use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
-use crate::constants::layout::{PAGE_SIZE};
+use super::forward_exception;
+use crate::debug::PageDebug;
+use crate::constants::csr::sip::STIP_BIT;
+use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
 use crate::guest::GuestKernel;
-use crate::timer::{get_time, get_default_timer};
 
 
-/// ebreak flag, gdb can make breakpoint here.
-pub fn ebreak(){ hdebug!("ebreak"); }
 
 /// 处理特权级指令问题
 pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
@@ -46,9 +42,6 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                     }
                 }
             },
-            riscv_decode::Instruction::Ebreak => {
-                ebreak();
-            }
             riscv_decode::Instruction::Csrrc(i) => {
                 let mask = ctx.x[i.rs1() as usize];
                 let csr = i.csr() as usize;
@@ -112,7 +105,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 if i.rs1() == 0 {
                     unsafe{ core::arch::asm!("sfence.vma") };
                 }else{
-                    panic!("[hypervisor] Unimplented!");
+                    unimplemented!()
                 }
             }
             riscv_decode::Instruction::Wfi => {}
@@ -139,87 +132,10 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
 
 
 
-/// 时钟中断处理函数
-pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
-    let time = get_time();
-    let mut next = time + get_default_timer();
-    if guest.shadow_state.csrs.sie.get_bit(STIE_BIT) {
-        if guest.shadow_state.csrs.mtimecmp <= time {
-            // 表明此时 Guest OS 发生中断
-            guest.shadow_state.interrupt = true;
-            // 设置 sip 寄存器
-            guest.shadow_state.csrs.sip.set_bit(STIP_BIT, true);
-        }else{
-            // 未发生中断，设置下次中断
-            next = next.min(guest.shadow_state.csrs.mtimecmp)
-        }
-    }
-    // 设置下次中断
-    set_timer(next);
-}
 
 
-pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-    let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
-    if let Some(inst) = inst {
-        match inst {
-            riscv_decode::Instruction::Sw(i) => {
-                let rs1 = i.rs1() as usize;
-                let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                let value = ctx.x[rs2];
-                guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
-            }
-            _ => panic!("stval: {:#x}", ctx.sepc)
-        }
-    }
-    ctx.sepc += len;
-}
 
-/// 向 guest kernel 转发异常
-pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-    let state = &mut guest.shadow_state;
-    state.csrs.scause = scause::read().code();
-    state.csrs.sepc = ctx.sepc;
-    state.csrs.stval = stval::read();
-    // 设置 sstatus 指向 S mode
-    state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
-    ctx.sepc = state.csrs.stvec;
-    // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
-    match guest.shadow_state.smode() {
-        true => {},
-        false => {}
-    }
-}
 
-/// 检测 Guest OS 是否发生中断，若有则进行转发
-pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-    // 没有发生中断，返回
-    if !guest.shadow_state.interrupt || in_guest(ctx.sepc) { return }
-    let state = &mut guest.shadow_state;
-    // 当前状态处于用户态，且开启中断并有中断正在等待
-    if (!state.smode() && state.csrs.sstatus.get_bit(STATUS_SIE_BIT)) && (state.csrs.sie & state.csrs.sip != 0) {
-        // hdebug!("forward timer interrupt: sepc -> {:#x}", ctx.sepc);
-        let cause = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
-        else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
-        else if state.csrs.sip.get_bit(SSIE_BIT) { 1 }
-        else{ unreachable!() };
 
-        state.csrs.scause = (1 << 63) | cause;
-        state.csrs.stval = 0;
-        state.csrs.sepc = ctx.sepc;
-        state.push_sie();
-        // 设置 sstatus 指向 S mode
-        state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
-        ctx.sepc = state.csrs.stvec;
-    }else{
-        state.interrupt = false;
-    }
-}
-
-pub fn in_guest(addr: usize) -> bool {
-    return (addr >= 0x8000_0000 && addr <= 0x8800_0000) || (addr >= 0x3ffffff000 && addr <= 0x3ffffff000 + PAGE_SIZE)
-}
 
 
