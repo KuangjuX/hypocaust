@@ -421,39 +421,11 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 PageTableRoot::GVA => {
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
                     self.shadow_state.conseutive_satp_switch_count += 1;
-                    // if self.shadow_state.conseutive_satp_switch_count % 10 == 0 {
-                    //     synchronize_page_table::<P>(hart_id, satp);
-                    // }
                     // 切换的页表为 `guest os page table`
                     // 需要重新遍历所有页表项，并将其设置为只读
                     collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
-                    
-                    let spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
-                    // 为 `SPT` 映射跳板页
-                    if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
-                        if !pte.is_valid() {
-                            let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-                            spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-                        }
-                    }else{
-                        let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-                        spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-                    }
-                        
-                    
-                    if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
-                        if !pte.is_valid() {
-                            let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                            let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
-                            spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
-                        }
-                    }else{
-                        let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                        let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
-                        spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
-                    }
                 },
                 PageTableRoot::UVA => {
                     collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
@@ -461,28 +433,28 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     });
                     // 需要更新用户态页表
                     synchronize_page_table::<P>(hart_id, satp);
-                    let spt = &mut self.shadow_state.shadow_page_tables.find_shadow_page_table_mut(self.shadow_state.get_satp()).unwrap().spt;
+                    let spt = &mut self.shadow_state.shadow_page_tables.find_shadow_page_table_mut(satp).unwrap().spt;
                     // 为 `SPT` 映射跳板页
+                    let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
                         if !pte.is_valid() {
-                            let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-                        spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
+                            htracking!("user remap trampoline");
+                            spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
                         }
                     }else{
-                        let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+                        htracking!("user remap trampoline");
                         spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
                     }
                         
-                    
+                    let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
+                    let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
                         if !pte.is_valid() {
-                            let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                            let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+                            htracking!("user remap trap context");
                             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
                         }
                     }else{
-                        let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                        let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+                        htracking!("user remap trap context");
                         spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
                     }
                     

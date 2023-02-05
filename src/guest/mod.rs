@@ -185,8 +185,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             0 => { self.write_shadow_csr(csr::satp, satp)}
             8 => {
                 // 获取 guest kernel 
-                self.make_shadow_page_table(satp);
                 self.write_shadow_csr(csr::satp, satp);
+                self.make_shadow_page_table(satp);
             }
             _ => { panic!("Atttempted to install page table with unsupported mode") }
         } 

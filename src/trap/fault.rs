@@ -9,9 +9,9 @@ use crate::constants::csr::sie::{SSIE_BIT, STIE_BIT};
 use crate::constants::csr::sip::{STIP_BIT, SEIP_BIT};
 use crate::constants::csr::status::{STATUS_SPP_BIT, STATUS_SIE_BIT};
 use crate::constants::layout::{PAGE_SIZE};
-use crate::page_table::{VirtPageNum, PhysPageNum, PageTable, PageTableSv39};
+use crate::page_table::PageTable;
 use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
-use crate::guest::{GuestKernel, gpa2hpa};
+use crate::guest::GuestKernel;
 use crate::timer::{get_time, get_default_timer};
 
 
@@ -74,21 +74,6 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 let prev = guest.read_shadow_csr(i.csr() as usize);
                 // 向 Shadow CSR 写入
                 let val = ctx.x[i.rs1() as usize];
-                if i.csr()  == crate::constants::csr::sepc as u32 && val == 0{
-                    hdebug!("satp -> {:#x}", guest.shadow_state.csrs.satp);
-                    let spt = &guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt;
-                    spt.print_trap_context();
-                    // 打印 SPT
-                    let root_vpn = VirtPageNum::from(guest.shadow_state.csrs.satp & 0xfff_ffff_ffff);
-                    let root_ppn = spt.translate(root_vpn).unwrap().ppn().0;
-                    hdebug!("root ppn -> {:#x}", root_ppn);
-                    spt.print_page_table();
-                    // 打印 GPT
-                    let root_gpa = (guest.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
-                    let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, guest.index) >> 12);
-                    let guest_pgt = PageTableSv39::from_ppn(root_hppn);
-                    guest_pgt.print_guest_page_table();
-                }
                 match i.csr() as usize {
                     crate::constants::csr::satp => { guest.satp_handler(val, ctx.sepc) },
                     _ => { guest.write_shadow_csr(i.csr() as usize, val); }
@@ -176,48 +161,6 @@ pub fn timer_handler<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
     set_timer(next);
 }
 
-// /// 处理页表
-// pub fn handle_gpt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
-//     // hdebug!("sepc -> {:#x}", ctx.sepc);
-//     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
-//     if let Some(inst) = inst {
-//         match inst {
-//             riscv_decode::Instruction::Sd(i) => {
-//                 let rs1 = i.rs1() as usize;
-//                 let rs2 = i.rs2() as usize;
-//                 let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-//                 let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-//                 let paddr = gpa2hpa(vaddr, guest.index);
-//                 unsafe{
-//                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
-//                 }
-//                 // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
-//                 if ctx.x[rs2] != 0{
-//                     // hdebug!("vaddr -> {:#x}, pte -> {:#x}", vaddr, ctx.x[rs2]);
-//                     // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
-//                     guest.synchronize_page_table(vaddr);
-//                 }
-//             },
-//             riscv_decode::Instruction::Sb(i) => {
-//                 let rs1 = i.rs1() as usize;
-//                 let rs2 = i.rs2() as usize;
-//                 let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-//                 let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-//                 let paddr = gpa2hpa(vaddr, guest.index);
-//                 unsafe{
-//                     core::ptr::write(paddr as *mut usize, ctx.x[rs2]);
-//                 }
-//                 // guest.sync_shadow_page_table(vaddr, PageTableEntry{ bits: ctx.x[rs2]}, ctx);
-//                 if ctx.x[rs2] != 0{
-//                     // hdebug!("ppn: {:#x}", ctx.x[rs2] >> 10);
-//                     guest.synchronize_page_table(vaddr);
-//                 }
-//             }
-//             _ => panic!("sepc: {:#x}", ctx.sepc)
-//         }
-//     }
-//     ctx.sepc += len;
-// }
 
 pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);

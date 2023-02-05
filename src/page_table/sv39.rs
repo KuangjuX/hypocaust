@@ -1,6 +1,6 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable};
+use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel, PteWrapper, PageWalk};
 use crate::guest::gpa2hpa;
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
@@ -121,16 +121,6 @@ impl PageTable for PageTableSv39 {
         *pte = PageTableEntry::empty();
     }
 
-    #[allow(unused)]
-    fn try_map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags) {
-        match self.translate(vpn) {
-            Some(pte) => {
-                if !pte.is_valid(){ self.map(vpn, ppn, flags) }
-            },
-            None => { self.map(vpn, ppn, flags) }
-        }
-    }
-
     fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.find_pte(vpn).map(|pte| *pte)
     }
@@ -142,6 +132,37 @@ impl PageTable for PageTableSv39 {
 
     fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
+    }
+
+    fn walk_page_table<R: Fn(usize) -> usize>(root: usize, va: usize, read_pte: R) -> Option<PageWalk> {
+        let mut path = Vec::new();
+        let mut page_table = root;
+        for level in 0..3 {
+            let pte_index = (va >> (30 - 9 * level)) & 0x1ff;
+            let pte_addr = page_table + pte_index * 8;
+            let pte = read_pte(pte_addr);
+            let level = match level {
+                0 => PageTableLevel::Level1GB,
+                1 => PageTableLevel::Level2MB,
+                2 => PageTableLevel::Level4KB,
+                _ => unreachable!(),
+            };
+            let pte = PageTableEntry{ bits: pte};
+            path.push(PteWrapper{ addr: pte_addr, pte, level});
+
+            if !pte.is_valid() || (pte.writable() && !pte.readable()){ return None; }
+            else if pte.readable() | pte.executable() {
+                let pa = match level {
+                    PageTableLevel::Level4KB => ((pte.bits >> 10) << 12) | (va & 0xfff),
+                    PageTableLevel::Level2MB => ((pte.bits >> 19) << 21) | (va & 0x1fffff),
+                    PageTableLevel::Level1GB => ((pte.bits >> 28) << 30) | (va & 0x3fffffff),
+                };
+                return Some(super::PageWalk { path, pa});
+            }else{
+                page_table = (pte.bits >> 10) << 12;
+            }
+        }
+        None
     }
 }
 
