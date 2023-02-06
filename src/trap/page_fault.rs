@@ -22,7 +22,7 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     let guest_va = stval::read();
     if guest_va % core::mem::size_of::<PageTableEntry>() != 0 {
         hwarning!("guest va: {:#x}, sepc: {:#x}", guest_va, ctx.sepc);
-        print_guest_backtrace::<P>(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, guest.shadow_state.csrs.satp, ctx)
+        print_guest_backtrace::<P>(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap(), guest.shadow_state.csrs.satp, ctx)
     }
     assert_eq!(guest_va % core::mem::size_of::<PageTableEntry>(), 0);
     let sepc = ctx.sepc;

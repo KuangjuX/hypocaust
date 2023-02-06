@@ -157,13 +157,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
     pub fn get_user_token(&self) -> usize {
         match self.shadow() {
-            PageTableRoot::GPA => { self.memory_set.token() }
-            PageTableRoot::GVA | PageTableRoot::UVA => { 
-                if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.csrs.satp) {
-                    return spt.token()
-                }
-                panic!()
-            }
+            PageTableRoot::GPA => self.memory_set.token(), 
+            PageTableRoot::GVA | PageTableRoot::UVA => self.shadow_state.shadow_page_tables.shadow_page_table(self.shadow_state.csrs.satp).unwrap().token(),
         }
     }
 
