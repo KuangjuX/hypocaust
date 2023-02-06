@@ -13,6 +13,7 @@ const SBI_REMOTE_SFENCE_VMA: usize = 6;
 const SBI_REMOTE_SFENCE_VMA_ASID: usize = 7;
 const SBI_SHUTDOWN: usize = 8;
 
+
 #[inline(always)]
 /// general sbi call
 fn sbi_call(which: usize, arg0: usize, arg1: usize, arg2: usize) -> usize {
@@ -44,8 +45,9 @@ pub fn set_timer(stime: usize) {
     sbi_rt::set_timer(stime as u64);
 }
 
-use crate::board::QEMUExit;
 /// use sbi call to shutdown the kernel
 pub fn shutdown() -> ! {
-    crate::board::QEMU_EXIT_HANDLE.exit_failure();
+    // crate::board::QEMU_EXIT_HANDLE.exit_failure();
+    sbi_rt::system_reset(sbi_rt::Shutdown, sbi_rt::SystemFailure);
+    unreachable!()
 }

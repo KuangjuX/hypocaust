@@ -37,7 +37,7 @@ mod mm;
 
 use constants::layout::PAGE_SIZE;
 
-use crate::{guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel}};
+use crate::guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel};
 use crate::mm::MemorySet;
 
 #[link_section = ".initrd"]

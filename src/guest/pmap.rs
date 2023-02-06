@@ -101,9 +101,6 @@ pub fn page_table_mode<P: PageTable>(page_table: P, hart_id: usize) -> PageTable
 }
 
 
-fn translate_addr<R: Fn(usize) -> Option<usize>>() -> Option<usize> {
-    unimplemented!()
-}
 
 fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     if let Some(pte) = spt.find_pte(vpn) {
