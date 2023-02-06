@@ -7,13 +7,12 @@ use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
 use crate::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
+use crate::device_emu::VirtDevice;
 
 
 mod switch;
 mod context;
 mod pmap;
-mod virtirq;
-mod virtdevice;
 
 use context::TaskContext;
 use alloc::vec::Vec;
@@ -21,7 +20,7 @@ use riscv::addr::BitField;
 use switch::__switch;
 use lazy_static::lazy_static;
 use crate::sync::UPSafeCell;
-use virtdevice::VirtDevice;
+
 
 
 pub use self::context::ShadowState;
@@ -116,14 +115,14 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
 }
 
 impl<P> GuestKernel<P> where P: PageDebug + PageTable {
-    pub fn new(memory_set: MemorySet<P>, index: usize) -> Self {
+    pub fn new(memory_set: MemorySet<P>, guest_id: usize) -> Self {
         // 获取中断上下文的物理地址
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()
             .ppn();
         // 获取内核栈地址
-        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(index);
+        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
         // 将内核栈地址进行映射
         KERNEL_SPACE.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
@@ -135,9 +134,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
-            index,
+            index: guest_id,
             smode: true,
-            virt_device: VirtDevice::new(), 
+            virt_device: VirtDevice::new(guest_id), 
         };
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();

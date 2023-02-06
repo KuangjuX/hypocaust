@@ -32,6 +32,7 @@ mod guest;
 mod debug;
 mod hyp_alloc;
 mod mm;
+mod device_emu;
 
 
 

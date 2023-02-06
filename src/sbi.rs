@@ -4,14 +4,7 @@ use core::arch::asm;
 
 pub const SBI_SET_TIMER: usize = 0;
 pub const SBI_CONSOLE_PUTCHAR: usize = 1;
-
 pub const SBI_CONSOLE_GETCHAR: usize = 2;
-const SBI_CLEAR_IPI: usize = 3;
-const SBI_SEND_IPI: usize = 4;
-const SBI_REMOTE_FENCE_I: usize = 5;
-const SBI_REMOTE_SFENCE_VMA: usize = 6;
-const SBI_REMOTE_SFENCE_VMA_ASID: usize = 7;
-const SBI_SHUTDOWN: usize = 8;
 
 
 #[inline(always)]
@@ -47,7 +40,6 @@ pub fn set_timer(stime: usize) {
 
 /// use sbi call to shutdown the kernel
 pub fn shutdown() -> ! {
-    // crate::board::QEMU_EXIT_HANDLE.exit_failure();
     sbi_rt::system_reset(sbi_rt::Shutdown, sbi_rt::SystemFailure);
     unreachable!()
 }
