@@ -1,7 +1,7 @@
 use riscv::register::stval;
 
 use crate::page_table::{PageTable,  PageTableEntry};
-use crate::debug::{PageDebug, print_guest_backtrace};
+use crate::debug::PageDebug;
 use crate::guest::{GuestKernel, gpa2hpa, PageTableRoot};
 use super::{ decode_instruction_at_address, handle_qemu_virt}; 
 
@@ -22,7 +22,6 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     let guest_va = stval::read();
     if guest_va % core::mem::size_of::<PageTableEntry>() != 0 {
         hwarning!("guest va: {:#x}, sepc: {:#x}", guest_va, ctx.sepc);
-        print_guest_backtrace::<P>(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap().spt, guest.shadow_state.csrs.satp, ctx)
     }
     assert_eq!(guest_va % core::mem::size_of::<PageTableEntry>(), 0);
     let sepc = ctx.sepc;
@@ -37,7 +36,6 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     let mut pte = 0;
     if let Some(_translation) = guest.translate_guest_vaddr(guest_va) {
         // 获得翻译后的物理地址
-        // hdebug!("translation: {:#x}", translation);
         if let Some(inst) = inst {
             match inst {
                 riscv_decode::Instruction::Sd(i) => {

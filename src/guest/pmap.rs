@@ -1,8 +1,10 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
+use alloc::collections::BTreeMap;
+use arrayvec::ArrayVec;
 
-use crate::debug::{PageDebug};
+use crate::debug::PageDebug;
 use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
 use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT};
 use crate::mm::KERNEL_SPACE;
@@ -30,94 +32,63 @@ pub enum PageTableRoot {
 }
 
 
-pub struct ShadowPageTableInfo<P: PageTable + PageDebug> {
-    pub mode: PageTableRoot,
-    /// 客户页表对应的 `satp`
-    pub satp: usize,
-    /// shadow page table
-    pub spt: P,
-    /// guest page table
-    pub gpt: P,
-    // /// 反向页表，用于从物理地址找回虚拟地址
-    // pub rmap: Option<Rmap>
-}
 
-impl<P> ShadowPageTableInfo<P> where P: PageDebug + PageTable {
-    pub fn new(satp: usize, spt: P, gpt: P,  mode: PageTableRoot) -> Self {
-        Self {
-            mode,
-            satp,
-            spt,
-            gpt,
-        }
-    }
-
-    pub fn token(&self) -> usize {
-        self.spt.token()
-    }
-}
 
 pub struct ShadowPageTables<P: PageTable + PageDebug> {
-    pub page_tables: UnsafeCell<VecDeque<ShadowPageTableInfo<P>>>
+    pub page_tables: ArrayVec<Option<usize>, 3>,
+    pub satp_table: UnsafeCell<BTreeMap<usize, P>>,
 }
 
 impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let mut page_tables: ArrayVec<Option<usize>, 3> = ArrayVec::new_const();
+        for _ in 0..3 {
+            page_tables.push(None);
+        }
         Self {
-            page_tables: UnsafeCell::new(VecDeque::new())
+            page_tables: page_tables,
+            satp_table: UnsafeCell::new(BTreeMap::new()),
         }
     }
 
-    pub fn inner(&self) -> &mut VecDeque<ShadowPageTableInfo<P>> {
-        unsafe{ &mut *self.page_tables.get() }
+    pub fn satp_table(&self) -> &mut BTreeMap<usize, P> {
+        unsafe{ &mut *self.satp_table.get() }
     }
 
-    pub fn push(&self, shadow_page_table: ShadowPageTableInfo<P>) {
-        let inner = self.inner();
-        if inner.iter().position(|item| item.satp == shadow_page_table.satp).is_some() {
-            panic!("Duplicated satp");
-        }
-        inner.push_back(shadow_page_table);
+
+    /// 检查 `satp` 是否存在
+    pub fn satp_exist(&self, satp: usize) -> bool {
+        if self.satp_table().contains_key(&satp){ true }
+        else{ false }
     }
 
-    pub fn find_shadow_page_table(&self, satp: usize) -> Option<&ShadowPageTableInfo<P>> {
-        let inner = self.inner();
-        for item in inner.iter() {
-            if item.satp == satp {
-                return Some(item)
-            }
-        }
-        None
+    pub fn push(&mut self, satp: usize, spt: P) {
+        if !self.satp_table().contains_key(&satp){ self.satp_table().insert(satp, spt); }
+        else{ htracking!("SPT exist? "); }
     }
 
-    pub fn find_shadow_page_table_mut(&self, satp: usize) -> Option<&mut ShadowPageTableInfo<P>> {
-        let inner = self.inner();
-        for item in inner.iter_mut() {
-            if item.satp == satp {
-                return Some(item)
-            }
+
+    pub fn guest_spt(&self, hart_id: usize) -> Option<&mut P> {
+        match self.page_tables[1] {
+            Some(spt) => {
+                let satp = (1 << 63) | (spt2gpt((spt & 0xfff_ffff_ffff) << 12, hart_id) >> 12);
+                self.satp_table().get_mut(&satp)
+            },
+            None => None
         }
-        None
     }
 
-    pub fn guest_page_table(&self) -> Option<&ShadowPageTableInfo<P>> {
-        let inner = self.inner();
-        for item in inner.iter() {
-            if item.mode == PageTableRoot::GVA {
-                return Some(item)
-            }
-        }
-        None
+    pub fn spt_by_satp(&self, satp: usize) -> Option<&mut P> {
+        if self.satp_table().contains_key(&satp) { self.satp_table().get_mut(&satp) }
+        else{ None }
     }
 
-    pub fn guest_page_table_mut(&self) -> Option<&mut ShadowPageTableInfo<P>> {
-        let inner = self.inner();
-        for item in inner.iter_mut() {
-            if item.mode == PageTableRoot::GVA {
-                return Some(item)
-            }
+    pub fn install_spt(&mut self, spt: usize, mode: PageTableRoot) {
+        match mode {
+            PageTableRoot::GVA => self.page_tables[1] = Some(spt),
+            PageTableRoot::UVA => self.page_tables[2] = Some(spt),
+            _ => unreachable!()
         }
-        None
     }
 
 }
@@ -126,12 +97,13 @@ pub fn gpa2hpa(va: usize, hart_id: usize) -> usize {
     va + (hart_id + 1) * segment_layout::HART_SEGMENT_SIZE
 }
 
-pub fn hpa2gpa(pa: usize, hart_id: usize) -> usize {
-    pa - (hart_id + 1) * segment_layout::HART_SEGMENT_SIZE
-}
 
 pub fn gpt2spt(va: usize, hart_id: usize) -> usize {
     va + segment_layout::SPT_OFFSET + hart_id * segment_layout::HART_SEGMENT_SIZE
+}
+
+pub fn spt2gpt(pa: usize, hart_id: usize) -> usize {
+    pa - segment_layout::SPT_OFFSET - hart_id * segment_layout::HART_SEGMENT_SIZE
 }
 
 pub fn page_table_mode<P: PageTable>(page_table: P, hart_id: usize) -> PageTableRoot {
@@ -142,9 +114,6 @@ pub fn page_table_mode<P: PageTable>(page_table: P, hart_id: usize) -> PageTable
 }
 
 
-fn translate_addr<R: Fn(usize) -> Option<usize>>() -> Option<usize> {
-    unimplemented!()
-}
 
 fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     if let Some(pte) = spt.find_pte(vpn) {
@@ -165,7 +134,6 @@ fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
         if pte.bits != 0 { drop = false; }
     });
     if drop {
-        // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
         // 将影子页表设置为可读可写
         if let Some(spt_pte) = spt.find_pte(VirtPageNum::from(va >> 12)) {
             *spt_pte = PageTableEntry::new(spt_pte.ppn(), PTEFlags::R | PTEFlags::W | PTEFlags::U | PTEFlags::V);
@@ -348,25 +316,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     }
 
     pub fn translate_guest_vpte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        if let Some(info) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.csrs.satp) {
+        if let Some(spt) = self.shadow_state.shadow_page_tables.spt_by_satp(self.shadow_state.csrs.satp) {
             // 由于 GHA 与 GPA 是同等映射的，因此翻译成的物理地址可以直接当虚拟地址用
-            let pte = info.spt.translate(vpn);
+            let pte = spt.translate(vpn);
             pte
         }else{
-            // hwarning!("translate guest va from GPA mode?");
             self.translate_guest_ppte(vpn)
         }
-    }
-
-    pub fn translate_valid_guest_vaddr(&self, vaddr: usize) -> Option<usize> {
-        let offset = vaddr & 0xfff;
-        let vpn = VirtPageNum::from(vaddr >> 12);
-        let pte = self.translate_guest_vpte(vpn);
-        if let Some(pte) = pte {
-            if !pte.is_valid(){ return None }
-            return Some((pte.ppn(). 0 << 12) + offset)
-        }
-        None
     }
 
     /// 根据 satp 构建影子页表
@@ -374,10 +330,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     pub fn make_shadow_page_table(&mut self, satp: usize) {
         // 根据 satp 获取 guest kernel 根页表的物理地址
         let hart_id = self.index;
-        let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
-        let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
-        let gpt = P::from_ppn(root_hppn);
-        if self.shadow_state.shadow_page_tables.find_shadow_page_table(satp).is_none() {
+        let root_page_table_ppn = PhysPageNum::from(gpa2hpa((satp & 0xfff_ffff_ffff) << 12, hart_id) >> 12);
+        let gpt = P::from_ppn(root_page_table_ppn);
+        if !self.shadow_state.shadow_page_tables.satp_exist(satp) {
+            
             // 如果影子页表中没有发现，新建影子页表
             let mut spt;
             let mode;
@@ -392,8 +348,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     // 将 mode 设置为 `UVA`
                     mode = PageTableRoot::UVA;
                     // 同步 guest spt,即将用户页表设置为只读
-                    let guest_spt_info = self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap();   
-                    let guest_spt = &mut guest_spt_info.spt;  
+                    let guest_spt = self.shadow_state.shadow_page_tables.guest_spt(hart_id).unwrap();   
                     spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, Some(guest_spt)).unwrap();              
                     
                 }
@@ -410,12 +365,12 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
 
             // 修改 `shadow page table`
-            // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
-            let spt_info = ShadowPageTableInfo::new(satp, spt, gpt, mode);
-            self.shadow_state.shadow_page_tables.push(spt_info);
+            hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
+            self.shadow_state.shadow_page_tables.install_spt(spt.token(), mode);
+            self.shadow_state.shadow_page_tables.push(satp, spt);
         }else{
             // 如果存在的话，根据 `guest page table` 更新 `guest os SPT` 只读项
-            let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
+            let guest_spt = self.shadow_state.shadow_page_tables.guest_spt(hart_id).unwrap();
             match page_table_mode(gpt.clone(), hart_id) {
                 PageTableRoot::GVA => {
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
@@ -425,6 +380,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
+                    self.shadow_state.shadow_page_tables.install_spt(guest_spt.token(), PageTableRoot::GVA);
                 },
                 PageTableRoot::UVA => {
                     collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
@@ -432,7 +388,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     });
                     // 需要更新用户态页表
                     synchronize_page_table::<P>(hart_id, satp);
-                    let spt = &mut self.shadow_state.shadow_page_tables.find_shadow_page_table_mut(satp).unwrap().spt;
+                    let spt = self.shadow_state.shadow_page_tables.spt_by_satp(satp).unwrap();
                     // 为 `SPT` 映射跳板页
                     let trampoline_hppn = KERNEL_SPACE.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
@@ -445,18 +401,18 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                         spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
                     }
                         
-                    let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                    let trapctx_hppn = KERNEL_SPACE.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+                    let trapctx_host_vpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
+                    let trapctx_host_ppn = KERNEL_SPACE.exclusive_access().translate(trapctx_host_vpn).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
                         if !pte.is_valid() {
                             htracking!("user remap trap context");
-                            spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+                            spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_host_ppn, PTEFlags::R | PTEFlags::W);
                         }
                     }else{
                         htracking!("user remap trap context");
-                        spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+                        spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_host_ppn, PTEFlags::R | PTEFlags::W);
                     }
-                    
+                    self.shadow_state.shadow_page_tables.install_spt(spt.token(), PageTableRoot::UVA);
                 },
                 _ => unreachable!()
             }
@@ -471,11 +427,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let host_pa = gpt2spt(va, hart_id);
         let host_ppn = PhysPageNum::from(host_pa >> 12);
         // 获得影子页表
-        let guest_spt = &mut self.shadow_state.shadow_page_tables.guest_page_table_mut().unwrap().spt;
+        let guest_spt = self.shadow_state.shadow_page_tables.guest_spt(hart_id).unwrap();
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
         }else if va % core::mem::size_of::<PageTableEntry>() == 0 && pte.bits == 0 {
-            // 页表项对齐且物理页号为 0, 写入 `u8`
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
             // 消除页表映射，将页表内存修改为可读可写
             clear_page_table(guest_spt, va, hart_id);

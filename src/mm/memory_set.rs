@@ -29,8 +29,6 @@ extern "C" {
     fn ebss();
     fn ekernel();
     fn strampoline();
-    fn sinitrd();
-    fn einitrd();
 }
 
 lazy_static! {
@@ -56,9 +54,6 @@ impl<P> MemorySet<P> where P: PageTable {
         self.page_table.token()
     }
 
-    pub fn page_table(&self) -> &P {
-        &self.page_table
-    }
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,

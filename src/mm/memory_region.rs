@@ -20,6 +20,7 @@ impl<T: Copy> MemoryRegion<T> {
 
     pub fn base(&self) -> usize { self.base_address }
 
+    #[allow(unused)]
     pub fn len(&self) -> usize { self.length_bytes }
 
     pub fn in_region(&self, addr: usize) -> bool {

@@ -98,7 +98,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 if !guest.shadow_state.smode() {
                     guest.shadow_state.interrupt = true;
                 }
-                // hdebug!("sret: spec -> {:#x}", ctx.sepc);
+                hdebug!("sret: spec -> {:#x}", ctx.sepc);
                 return;
             }
             riscv_decode::Instruction::SfenceVma(i) => {

@@ -14,6 +14,7 @@ mod context;
 mod pmap;
 mod virtirq;
 mod virtdevice;
+mod gvm;
 
 use context::TaskContext;
 use alloc::vec::Vec;
@@ -25,7 +26,7 @@ use virtdevice::VirtDevice;
 
 
 pub use self::context::ShadowState;
-pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
+pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa};
 
 
 
@@ -76,10 +77,6 @@ pub fn run_guest_kernel() -> ! {
     panic!("unreachable in run_first_task!");
 }
 
-pub fn current_run_id() -> usize {
-    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-    id
-}
 
 pub fn current_user_token() -> usize {
     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
@@ -157,13 +154,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
     pub fn get_user_token(&self) -> usize {
         match self.shadow() {
-            PageTableRoot::GPA => { self.memory_set.token() }
-            PageTableRoot::GVA | PageTableRoot::UVA => { 
-                if let Some(spt) = self.shadow_state.shadow_page_tables.find_shadow_page_table(self.shadow_state.csrs.satp) {
-                    return spt.token()
-                }
-                panic!()
-            }
+            PageTableRoot::GPA => self.memory_set.token(),
+            PageTableRoot::GVA => self.shadow_state.shadow_page_tables.page_tables[1].unwrap(),
+            PageTableRoot::UVA => self.shadow_state.shadow_page_tables.page_tables[2].unwrap()
         }
     }
 

@@ -51,16 +51,16 @@ pub struct ShadowState<P: PageTable + PageDebug> {
     /// 是否发生中断
     pub interrupt: bool,
     /// 连续切换页表次数
-    pub conseutive_satp_switch_count: usize
+    pub conseutive_satp_switch_count: usize,
 }
 
 impl<P> ShadowState<P> where P: PageTable + PageDebug {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             csrs: ControlRegisters::new(),
             shadow_page_tables: ShadowPageTables::new(),
             interrupt: false,
-            conseutive_satp_switch_count: 0
+            conseutive_satp_switch_count: 0,
         }
     }
 
@@ -91,8 +91,6 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
     pub fn smode(&self) -> bool { 
         self.csrs.sstatus.get_bit(STATUS_SPP_BIT)    
     } 
-    // 是否开启分页
-    pub fn paged(&self) -> bool { self.csrs.satp != 0 }
 
 
 }

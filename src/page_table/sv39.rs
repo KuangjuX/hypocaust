@@ -1,16 +1,12 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
-use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel, PteWrapper, PageWalk};
+use super::{PhysPageNum, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel, PteWrapper, PageWalk};
 use crate::guest::gpa2hpa;
 use crate::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
 use alloc::vec::Vec;
 
 
-pub struct PageWalkSv39 {
-    pub path: [PageTableEntry; 3],
-    pub pa: usize
-}
 
 /// page table structure
 #[derive(Clone)]
@@ -121,14 +117,11 @@ impl PageTable for PageTableSv39 {
         *pte = PageTableEntry::empty();
     }
 
-    fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).map(|pte| *pte)
-    }
 
-    #[allow(unused)]
-    fn translate_guest(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry> {
-        self.find_guest_pte(vpn, hart_id).map(|pte| *pte)
-    }
+    // #[allow(unused)]
+    // fn translate_guest(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry> {
+    //     self.find_guest_pte(vpn, hart_id).map(|pte| *pte)
+    // }
 
     fn token(&self) -> usize {
         8usize << 60 | self.root_ppn.0
@@ -166,25 +159,4 @@ impl PageTable for PageTableSv39 {
     }
 }
 
-/// translate a pointer to a mutable u8 Vec through page table
-pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&'static mut [u8]> {
-    let page_table = PageTableSv39::from_token(token);
-    let mut start = ptr as usize;
-    let end = start + len;
-    let mut v = Vec::new();
-    while start < end {
-        let start_va = VirtAddr::from(start);
-        let mut vpn = start_va.floor();
-        let ppn = page_table.translate(vpn).unwrap().ppn();
-        vpn.step();
-        let mut end_va: VirtAddr = vpn.into();
-        end_va = end_va.min(VirtAddr::from(end));
-        if end_va.page_offset() == 0 {
-            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..]);
-        } else {
-            v.push(&mut ppn.get_bytes_array()[start_va.page_offset()..end_va.page_offset()]);
-        }
-        start = end_va.into();
-    }
-    v
-}
+

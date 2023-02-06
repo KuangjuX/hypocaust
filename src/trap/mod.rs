@@ -124,6 +124,7 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
     let user_satp = current_user_token();
+    // hdebug!("current user token: {:#x}", user_satp);
     extern "C" {
         fn __alltraps();
         fn __restore();
@@ -151,7 +152,7 @@ pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
             let stval = stval::read();
             panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), _trap_cx.sepc, stval);
         },
-        _ => { panic!("scause: {:?}, spec: {:#x}", scause.cause(), sepc)}
+        _ => { panic!("scause: {:?}, spec: {:#x}, stval: {:#x}", scause.cause(), sepc, stval::read())}
     }
 }
 

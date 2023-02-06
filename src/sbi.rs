@@ -6,11 +6,17 @@ pub const SBI_SET_TIMER: usize = 0;
 pub const SBI_CONSOLE_PUTCHAR: usize = 1;
 
 pub const SBI_CONSOLE_GETCHAR: usize = 2;
+#[allow(unused)]
 const SBI_CLEAR_IPI: usize = 3;
+#[allow(unused)]
 const SBI_SEND_IPI: usize = 4;
+#[allow(unused)]
 const SBI_REMOTE_FENCE_I: usize = 5;
+#[allow(unused)]
 const SBI_REMOTE_SFENCE_VMA: usize = 6;
+#[allow(unused)]
 const SBI_REMOTE_SFENCE_VMA_ASID: usize = 7;
+#[allow(unused)]
 const SBI_SHUTDOWN: usize = 8;
 
 #[inline(always)]

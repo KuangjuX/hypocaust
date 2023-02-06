@@ -32,6 +32,7 @@ impl QemuVirtTester {
         self.mmregs.in_region(addr)
     }
 
+    #[allow(unused)]
     pub fn base(&self) -> usize {
         self.mmregs.base()
     }
