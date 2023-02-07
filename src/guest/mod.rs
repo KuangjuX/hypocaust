@@ -107,7 +107,7 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState<P>,
-    pub index: usize,
+    pub guest_id: usize,
     /// Guest OS 是否运行在 S mode
     pub smode: bool,
     /// Virtual emulated device in qemu
@@ -134,7 +134,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
-            index: guest_id,
+            guest_id,
             smode: true,
             virt_device: VirtDevice::new(guest_id), 
         };
@@ -154,10 +154,14 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         guest_kernel
     }
 
+    /// 根据 `PageTableRoot` mode 来获取对应的 shadow page table token
     pub fn get_user_token(&self) -> usize {
         match self.shadow() {
             PageTableRoot::GPA => self.memory_set.token(), 
-            PageTableRoot::GVA | PageTableRoot::UVA => self.shadow_state.shadow_page_tables.shadow_page_table(self.shadow_state.csrs.satp).unwrap().token(),
+            PageTableRoot::GVA => if self.shadow_state.csrs.satp == self.shadow_state.shadow_page_tables.guest_satp.unwrap() 
+                                    { self.shadow_state.shadow_page_tables.page_tables[1].unwrap() }
+                                    else{ self.shadow_state.shadow_page_tables.page_tables[2].unwrap() },
+            PageTableRoot::UVA => self.shadow_state.shadow_page_tables.page_tables[2].unwrap(),  
         }
     }
 

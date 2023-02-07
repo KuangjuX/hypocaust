@@ -329,7 +329,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     /// 需要将 GVA -> HPA
     pub fn make_shadow_page_table(&mut self, satp: usize) {
         // 根据 satp 获取 guest kernel 根页表的物理地址
-        let hart_id = self.index;
+        let hart_id = self.guest_id;
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
         let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
         let gpt = P::from_ppn(root_hppn);
@@ -421,7 +421,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
 
     pub fn synchronize_page_table(&mut self, va: usize, pte: PageTableEntry) {
-        let hart_id = self.index;
+        let hart_id = self.guest_id;
         // 获取对应影子页表的地址
         let host_pa = gpt2spt(va, hart_id);
         let host_ppn = PhysPageNum::from(host_pa >> 12);

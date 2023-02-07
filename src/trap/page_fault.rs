@@ -48,14 +48,14 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
                     assert_eq!(vaddr, guest_va);
                     pte = ctx.x[rs2];
                 },
-                riscv_decode::Instruction::Sb(_) => {
+                riscv_decode::Instruction::Sb(_) | riscv_decode::Instruction::Sw(_) => {
                     panic!("Unsporrted instruction");
                 }
                 _ => { return false }
             }
         }
         let pte = PageTableEntry{ bits: pte };       
-        let guest_pte_addr = gpa2hpa(guest_va, guest.index);
+        let guest_pte_addr = gpa2hpa(guest_va, guest.guest_id);
         unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
 
         guest.synchronize_page_table(guest_va, pte);
