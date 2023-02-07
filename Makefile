@@ -6,6 +6,8 @@ CPUS		:= 1
 
 BOARD 		:= qemu
 
+GDB			:= gdb-multiarch
+
 # 客户操作系统
 GUEST_KERNEL_ELF	:= ./guest_kernel
 # GUEST_KERNEL_BIN	:= minikernel/target/$(TARGET)/$(MODE)/minikernel.bin
@@ -50,11 +52,16 @@ clean:
 	cd minikernel/user && cargo clean
 	rm guest_kernel && rm guest.S && rm hyper.S
 
+qemu-gdb: $(KERNEL_ELF)
+	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234
+
+gdb: $(KERNEL_ELF)
+	$(GDB) $(KERNEL_ELF)
 
 debug: $(KERNEL_BIN)
 	@tmux new-session -d \
 		"$(QEMU) $(QEMUOPTS) -s -S" && \
-		tmux split-window -h "riscv64-unknown-elf-gdb -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
+		tmux split-window -h "$(GDB) -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
 		tmux -2 attach-session -d
 
 asm:
