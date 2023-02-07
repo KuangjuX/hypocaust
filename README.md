@@ -2,6 +2,8 @@
 **Hypocaust** is an S-mode trap and emulate type-1 hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type. It can run on [RustSBI](https://github.com/rustsbi/rustsbi) currently.  
 
 ![](docs/images/hypocaust.png)
+![](docs/images/run1.jpg)
+![](docs/images/debug1.jpg)
 
 ## Environment
 - QEMU 7.0.0
@@ -57,6 +59,7 @@ make qemu
 - [x] Foward Expections & Interrupts
 - [x] Timers
 - [ ] Serial IO emulate
+- [ ] Handle external interrupts
 - [ ] Expose and/or emulate peripherals
 - [ ] passthrough virtio block and networkd devices
 - [ ] multicore supported
