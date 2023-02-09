@@ -1,4 +1,5 @@
 mod uart;
+mod plic;
 pub use uart::Uart;
 
 

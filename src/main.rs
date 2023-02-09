@@ -33,13 +33,15 @@ mod debug;
 mod hyp_alloc;
 mod mm;
 mod device_emu;
+mod device;
 
 
 
-use constants::layout::PAGE_SIZE;
-
+use crate::constants::layout::PAGE_SIZE;
 use crate::guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel};
 use crate::mm::MemorySet;
+
+// use fdt::Fdt;
 
 #[link_section = ".initrd"]
 #[cfg(feature = "embed_guest_kernel")]
