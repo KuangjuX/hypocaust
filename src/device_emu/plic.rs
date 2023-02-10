@@ -1,5 +1,3 @@
-use core::arch::asm;
-
 use crate::mm::MemoryRegion;
 
 

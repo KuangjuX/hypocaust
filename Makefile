@@ -8,6 +8,8 @@ BOARD 		:= qemu
 
 GDB			:= gdb-multiarch
 
+FS_IMG 		:= fs.img
+
 # 客户操作系统
 GUEST_KERNEL_ELF	:= ./guest_kernel
 # GUEST_KERNEL_BIN	:= minikernel/target/$(TARGET)/$(MODE)/minikernel.bin
@@ -24,7 +26,7 @@ KERNEL_ENTRY_PA := 0x80200000
 
 QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER) -nographic
 QEMUOPTS	+=-device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
-QEMUOPTS	+=-drive file=$(FS_IMG).if=none,format=raw,id=x0
+QEMUOPTS	+=-drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS	+=-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
 

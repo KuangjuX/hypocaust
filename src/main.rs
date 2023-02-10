@@ -34,10 +34,12 @@ mod hyp_alloc;
 mod mm;
 mod device_emu;
 mod device;
+mod hypervisor;
 
 
 
 use crate::constants::layout::PAGE_SIZE;
+use crate::device::init_dt;
 use crate::guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel};
 use crate::mm::MemorySet;
 
@@ -95,6 +97,7 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         clear_bss();
         hdebug!("Hello Hypocaust");
         hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
+        init_dt(device_tree_blob);
         // 初始化堆及帧分配器
         hyp_alloc::heap_init();
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);

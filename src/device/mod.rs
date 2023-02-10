@@ -1,3 +1,3 @@
 mod block;
 
-pub use block::VirtIOBlock;
+pub use block::{ VirtIOBlock, init_dt };

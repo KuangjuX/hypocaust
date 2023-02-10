@@ -2,8 +2,9 @@ use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
 use crate::constants::csr::sip::SSIP;
 use crate::constants::csr::status::STATUS_SIE_BIT;
 use crate::debug::PageDebug;
+use crate::hypervisor::HYPOCAUST;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
-use crate::mm::{MemorySet, MapPermission, KERNEL_SPACE};
+use crate::mm::{MemorySet, MapPermission};
 use crate::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
@@ -124,7 +125,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 获取内核栈地址
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
         // 将内核栈地址进行映射
-        KERNEL_SPACE.exclusive_access().insert_framed_area(
+        HYPOCAUST.lock().hyper_space.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
@@ -147,7 +148,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         *trap_cx = TrapContext::app_init_context(
             GUEST_KERNEL_VIRT_START,
             0,
-            KERNEL_SPACE.exclusive_access().token(),
+            HYPOCAUST.lock().hyper_space.exclusive_access().token(),
             kernel_stack_top,
             trap_handler as usize,
         );

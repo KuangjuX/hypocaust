@@ -1,6 +1,7 @@
 mod uart;
 mod plic;
 pub use uart::Uart;
+pub use plic::HostPlic;
 
 
 /// Software emulated device used in VMM
