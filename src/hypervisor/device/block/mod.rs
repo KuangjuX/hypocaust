@@ -4,6 +4,8 @@ use virtio_drivers::{device::blk::VirtIOBlk, transport::{Transport, mmio::{VirtI
 
 use fdt::{node::FdtNode, standard_nodes::Compatible, Fdt};
 
+use crate::hypervisor::device::block::virtio_blk::virtio_blk_test;
+
 use self::virtio_blk::VirtioHal;
 
 
@@ -57,6 +59,7 @@ fn virtio_probe(node: FdtNode) {
                     transport.device_type(),
                     transport.version()
                 );
+                virtio_blk_test(transport);
             }
         }
     }

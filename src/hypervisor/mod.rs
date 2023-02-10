@@ -2,6 +2,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::Mutex;
 
+
 use crate::sync::UPSafeCell;
 use crate::mm::MemorySet;
 use crate::page_table::{PageTable, PageTableSv39};
@@ -17,7 +18,7 @@ pub mod trap;
 
 pub struct Hypervisor<P: PageTable + PageDebug> {
     pub hyper_space: Arc<UPSafeCell<MemorySet<P>>>,
-    pub frame_queue: Vec<FrameTracker>
+    pub frame_queue: Mutex<Vec<FrameTracker>>
 }
 
 lazy_static! {
@@ -25,7 +26,7 @@ lazy_static! {
     pub static ref HYPOCAUST: Mutex<Hypervisor<PageTableSv39>> = Mutex::new(
         Hypervisor { 
             hyper_space: Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) }),
-            frame_queue: Vec::new()
+            frame_queue: Mutex::new(Vec::new())
         }
     );
 }

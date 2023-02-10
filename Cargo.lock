@@ -279,7 +279,8 @@ checksum = "84a22b9f218b40614adcb3f4ff08b703773ad44fa9423e4e0d346d5db86e4ebc"
 [[package]]
 name = "virtio-drivers"
 version = "0.3.0"
-source = "git+https://github.com/rcore-os/virtio-drivers#67183ee2622d3c267763e235b116992b85b0671c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aedaf1192446dc383b6bfb02d6a47813078932a96c0589e42b87ce684b934c40"
 dependencies = [
  "bitflags",
  "log",

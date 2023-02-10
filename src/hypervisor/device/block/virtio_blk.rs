@@ -1,44 +1,49 @@
 use core::ptr::NonNull;
 
-use spin::Mutex;
-use virtio_drivers::{Hal, transport::Transport, device::blk::VirtIOBlk};
+use alloc::vec;
+use virtio_drivers::transport::Transport;
+use virtio_drivers::transport::mmio::MmioTransport;
+use virtio_drivers::{Hal, device::blk::VirtIOBlk};
 
+use crate::hypervisor::HYPOCAUST;
 use crate::hypervisor::hyp_alloc::{frame_alloc, frame_dealloc};
 use crate::page_table::PhysPageNum;
+use crate::sync::UPSafeCell;
 
-use super::BlockDevice;
 
-pub struct VirtIOBlock<T: Transport>(Mutex<VirtIOBlk<VirtioHal, T>>);
+pub struct VirtIOBlock(UPSafeCell<VirtIOBlk<VirtioHal, MmioTransport>>);
 
 // pub fn virtio_blk<T: Transport>(transport: T) {
 //     let mut blk = VirtIOBlk::<VirtioHal, T>::new(transport).expect("failed to create blk driver");
 
 // }
 
-impl<T: Transport + 'static> BlockDevice for VirtIOBlock<T> {
-    fn read_block(&self, block_id: usize, buf: &mut [u8]) {
-        self.0
-            .lock()
-            .read_block(block_id, buf)
-            .expect("Error when reading VirtIOBlk");
-    }
+// impl BlockDevice for VirtIOBlock {
+//     fn read_block(&self, block_id: usize, buf: &mut [u8]) {
+//         self.0
+//             .lock()
+//             .read_block(block_id, buf)
+//             .expect("Error when reading VirtIOBlk");
+//     }
 
-    fn write_block(&self, block_id: usize, buf: &[u8]) {
-        self.0
-            .lock()
-            .write_block(block_id, buf)
-            .expect("Error when writing VirtIOBlk");
-    }
-}
+//     fn write_block(&self, block_id: usize, buf: &[u8]) {
+//         self.0
+//             .lock()
+//             .write_block(block_id, buf)
+//             .expect("Error when writing VirtIOBlk");
+//     }
+// }
 
 pub struct VirtioHal;
 
-unsafe impl Hal for VirtioHal {
+impl Hal for VirtioHal {
     /// Allocates the given number of continguous physical pages of DMA memory for VirtIO use.
     /// 
     /// Returns both the physical address which the device can use to access the memory, and a pointer to the start of it 
     /// which the driver can use to access it.
     fn dma_alloc(pages: usize, _direction: virtio_drivers::BufferDirection) -> (virtio_drivers::PhysAddr, core::ptr::NonNull<u8>) {
+        let hypocaust = HYPOCAUST.lock();
+        let mut queue = hypocaust.frame_queue.lock();
         let mut ppn_base = PhysPageNum(0);
         for i in 0..pages {
             let frame = frame_alloc().unwrap();
@@ -46,6 +51,7 @@ unsafe impl Hal for VirtioHal {
                 ppn_base = frame.ppn;
             }
             assert_eq!(frame.ppn.0, ppn_base.0 + i);
+            queue.push(frame);
         }
         let pa: virtio_drivers::PhysAddr  = ppn_base.0 << 12;
         let va = NonNull::new(pa as _).unwrap();
@@ -53,7 +59,7 @@ unsafe impl Hal for VirtioHal {
     }
 
     /// Reallocates the given contiguou physical DMA memory pages
-    unsafe fn dma_dealloc(paddr: virtio_drivers::PhysAddr, _vaddr: core::ptr::NonNull<u8>, pages: usize) -> i32 {
+    fn dma_dealloc(paddr: virtio_drivers::PhysAddr, _vaddr: core::ptr::NonNull<u8>, pages: usize) -> i32 {
         let mut ppn_base = PhysPageNum::from(paddr >> 12);
         for _ in 0..pages {
             frame_dealloc(ppn_base);
@@ -66,7 +72,7 @@ unsafe impl Hal for VirtioHal {
     /// 
     /// This is only used for MMIO addressed within BARs read from the device, for the PCI transport. It may check
     /// that the address range up to the given size is within the region expected for MMIO.
-    unsafe fn mmio_phys_to_virt(paddr: virtio_drivers::PhysAddr, _size: usize) -> core::ptr::NonNull<u8> {
+    fn mmio_phys_to_virt(paddr: virtio_drivers::PhysAddr, _size: usize) -> core::ptr::NonNull<u8> {
         NonNull::new(paddr as _).unwrap()
     }
 
@@ -74,16 +80,31 @@ unsafe impl Hal for VirtioHal {
     /// 
     /// This may involve mapping the buffer into an IOMMU, giving the host permission to access the memory, or copying
     /// it to a special region where it canbe accessed.
-    unsafe fn share(_buffer: core::ptr::NonNull<[u8]>, _direction: virtio_drivers::BufferDirection) -> virtio_drivers::PhysAddr {
-        unimplemented!()
+    fn share(buffer: core::ptr::NonNull<[u8]>, _direction: virtio_drivers::BufferDirection) -> virtio_drivers::PhysAddr {
+        let vaddr = buffer.as_ptr() as *mut u8 as usize;
+        vaddr as virtio_drivers::PhysAddr
     }
 
     /// Unshares the given memory range from the device and (if necessary) copies it back to the original buffer.
-    unsafe fn unshare(_paddr: virtio_drivers::PhysAddr, _buffer: core::ptr::NonNull<[u8]>, _direction: virtio_drivers::BufferDirection) {
-        unimplemented!()
+    fn unshare(_paddr: virtio_drivers::PhysAddr, _buffer: core::ptr::NonNull<[u8]>, _direction: virtio_drivers::BufferDirection) {
     }
 }
 
 
-unsafe impl<T: Transport> Sync for VirtIOBlock<T>{}
-unsafe impl<T: Transport> Send for VirtIOBlock<T>{}
+// unsafe impl<T: Transport> Sync for VirtIOBlock<T>{}
+// unsafe impl<T: Transport> Send for VirtIOBlock<T>{}
+
+pub fn virtio_blk_test<T: Transport>(transport: T) {
+    let mut blk = VirtIOBlk::<VirtioHal, T>::new(transport).expect("failed to create blk driver");
+    let mut input = vec![0xffu8; 512];
+    let mut output = vec![0; 512];
+    for i in 0..32 {
+        for x in input.iter_mut() {
+            *x = i as u8;
+        }
+        blk.write_block(i, &input).expect("failed to write");
+        blk.read_block(i, &mut output).expect("failed to read");
+        assert_eq!(input, output);
+    }
+    hdebug!("virtio-blk test finished");
+}
