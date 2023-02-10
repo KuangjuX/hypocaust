@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use spin::Mutex;
 use virtio_drivers::{Hal, transport::Transport, device::blk::VirtIOBlk};
 
-use crate::hyp_alloc::{frame_alloc, frame_dealloc};
+use crate::hypervisor::hyp_alloc::{frame_alloc, frame_dealloc};
 use crate::page_table::PhysPageNum;
 
 use super::BlockDevice;

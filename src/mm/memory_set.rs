@@ -1,6 +1,6 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
-use crate::hyp_alloc::{FrameTracker, frame_alloc};
+use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
 use crate::hypervisor::HYPOCAUST;
 use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
 use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};

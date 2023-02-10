@@ -5,7 +5,7 @@ use crate::debug::PageDebug;
 use crate::hypervisor::HYPOCAUST;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
 use crate::mm::{MemorySet, MapPermission};
-use crate::trap::{TrapContext, trap_handler};
+use crate::hypervisor::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
 use crate::device_emu::VirtDevice;
