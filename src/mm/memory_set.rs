@@ -1,7 +1,8 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
-use crate::hyp_alloc::{FrameTracker, frame_alloc};
-use crate::page_table::{PTEFlags, PageTable, PageTableEntry, PageTableSv39};
+use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
+use crate::hypervisor::HYPOCAUST;
+use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
 use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::page_table::{StepByOne, VPNRange, PPNRange};
 use crate::constants::layout::{ 
@@ -9,13 +10,10 @@ use crate::constants::layout::{
     GUEST_KERNEL_VIRT_START, MEMORY_END, MMIO, 
     GUEST_KERNEL_VIRT_END, GUEST_KERNEL_PHY_END_1, SPT_PA_START_1, SPT_PA_END_1
 };
-use crate::sync::UPSafeCell;
 use alloc::collections::BTreeMap;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::marker::PhantomData;
-use lazy_static::*;
 use riscv::register::satp;
 
 extern "C" {
@@ -33,11 +31,6 @@ extern "C" {
     fn einitrd();
 }
 
-lazy_static! {
-    /// a memory set instance through lazy_static! managing kernel space
-    pub static ref KERNEL_SPACE: Arc<UPSafeCell<MemorySet<PageTableSv39>>> =
-        Arc::new(unsafe { UPSafeCell::new(MemorySet::new_kernel()) });
-}
 
 /// memory set structure, controls virtual-memory space
 pub struct MemorySet<P: PageTable> {
@@ -468,7 +461,8 @@ bitflags! {
 
 #[allow(unused)]
 pub fn remap_test() {
-    let mut kernel_space = KERNEL_SPACE.exclusive_access();
+    let hypocaust = HYPOCAUST.lock();
+    let mut kernel_space = hypocaust.hyper_space.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
     let mid_data: VirtAddr = ((sdata as usize + edata as usize) / 2).into();
@@ -495,7 +489,8 @@ pub fn remap_test() {
 #[allow(unused)]
 pub fn guest_kernel_test() {
     use crate::constants::layout::GUEST_KERNEL_PHY_START_1;
-    let mut kernel_space = KERNEL_SPACE.exclusive_access();
+    let hypocaust = HYPOCAUST.lock();
+    let mut kernel_space = hypocaust.hyper_space.exclusive_access();
 
     let guest_kernel_text: VirtAddr = GUEST_KERNEL_PHY_START_1.into();
 

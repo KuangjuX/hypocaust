@@ -2,7 +2,7 @@
 
 use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel, PteWrapper, PageWalk};
 use crate::guest::gpa2hpa;
-use crate::hyp_alloc::{FrameTracker, frame_alloc};
+use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
 use alloc::vec;
 use alloc::vec::Vec;
 

@@ -1,5 +1,5 @@
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::trap::TrapContext;
+use crate::hypervisor::trap::TrapContext;
 use crate::page_table::{VirtPageNum, PageTable};
 
 use super::PageDebug;

@@ -1,6 +1,6 @@
 use crate::page_table::{PageTableEntry, PageTableSv39, PhysPageNum, VirtPageNum, PageTable};
 use crate::constants::layout::GUEST_TRAP_CONTEXT;
-use crate::trap::TrapContext;
+use crate::hypervisor::trap::TrapContext;
 
 pub trait PageDebug {
     fn print_page_table(&self);

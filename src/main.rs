@@ -27,19 +27,21 @@ mod page_table;
 mod sbi;
 mod sync;
 mod timer;
-pub mod trap;
 mod guest;
 mod debug;
-mod hyp_alloc;
 mod mm;
 mod device_emu;
+mod hypervisor;
 
 
 
-use constants::layout::PAGE_SIZE;
-
+use crate::constants::layout::PAGE_SIZE;
 use crate::guest::{GuestKernel, GUEST_KERNEL_MANAGER, run_guest_kernel};
+use crate::hypervisor::HYPOCAUST;
+use crate::hypervisor::device::VirtIOBlock;
 use crate::mm::MemorySet;
+
+// use fdt::Fdt;
 
 #[link_section = ".initrd"]
 #[cfg(feature = "embed_guest_kernel")]
@@ -94,15 +96,28 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         hdebug!("Hello Hypocaust");
         hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
         // 初始化堆及帧分配器
-        hyp_alloc::heap_init();
+        hypervisor::hyp_alloc::heap_init();
+        // 获取 `transport`
+        if let Some(transport) = hypervisor::device::initialize_virtio_blk(device_tree_blob) {
+            let virtio_blk = VirtIOBlock::new(transport);
+            let mut hypocaust = HYPOCAUST.lock();
+            hdebug!("create virtio block");
+            // 添加 virtio block 设备
+            hypocaust.add_virtio_blk(virtio_blk);
+            drop(hypocaust);
+        }
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
         // 初始化虚拟内存
         mm::vm_init(&guest_kernel_memory);
-        trap::init();
+        hypervisor::trap::init();
+        // 测试重映射
         mm::remap_test();
+        // 测试 guest kernel 内存映射
         mm::guest_kernel_test();
+        // 测试 virtio block
+        hypervisor::device::virtio_blk_test();
         // 开启时钟中断
-        trap::enable_timer_interrupt();
+        hypervisor::trap::enable_timer_interrupt();
         timer::set_default_next_trigger();
         // 创建用户态的 guest kernel 内存空间
         let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);

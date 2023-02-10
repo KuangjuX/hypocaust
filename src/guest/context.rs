@@ -1,7 +1,7 @@
 use riscv::addr::BitField;
 
 
-use crate::trap::trap_return;
+use crate::hypervisor::trap::trap_return;
 use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT};
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
