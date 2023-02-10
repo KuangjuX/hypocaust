@@ -2,37 +2,95 @@ use core::ptr::NonNull;
 
 use alloc::vec;
 use virtio_drivers::transport::Transport;
-use virtio_drivers::transport::mmio::MmioTransport;
+use virtio_drivers::transport::mmio::{VirtIOHeader, MmioTransport};
 use virtio_drivers::{Hal, device::blk::VirtIOBlk};
+use fdt::{ Fdt, node::FdtNode, standard_nodes::Compatible };
 
 use crate::hypervisor::HYPOCAUST;
 use crate::hypervisor::hyp_alloc::{frame_alloc, frame_dealloc};
 use crate::page_table::PhysPageNum;
 use crate::sync::UPSafeCell;
+use super::BlockDevice;
 
 
-pub struct VirtIOBlock(UPSafeCell<VirtIOBlk<VirtioHal, MmioTransport>>);
+pub struct VirtIOBlock<T: Transport>(UPSafeCell<VirtIOBlk<VirtioHal, T>>);
 
-// pub fn virtio_blk<T: Transport>(transport: T) {
-//     let mut blk = VirtIOBlk::<VirtioHal, T>::new(transport).expect("failed to create blk driver");
 
-// }
+impl<T: Transport> VirtIOBlock<T> {
+    pub fn new(transport: T) -> Self {
+        let virtio_blk = unsafe{
+            UPSafeCell::new(
+                VirtIOBlk::new(transport).expect("failed to create vitio blk device")
+            )
+        };
+        Self(virtio_blk)
+    }
+} 
 
-// impl BlockDevice for VirtIOBlock {
-//     fn read_block(&self, block_id: usize, buf: &mut [u8]) {
-//         self.0
-//             .lock()
-//             .read_block(block_id, buf)
-//             .expect("Error when reading VirtIOBlk");
-//     }
+unsafe impl<T: Transport> Sync for VirtIOBlock<T>{}
+unsafe impl<T: Transport> Send for VirtIOBlock<T>{}
 
-//     fn write_block(&self, block_id: usize, buf: &[u8]) {
-//         self.0
-//             .lock()
-//             .write_block(block_id, buf)
-//             .expect("Error when writing VirtIOBlk");
-//     }
-// }
+pub fn initialize_virtio_blk(dtb: usize) -> Option<MmioTransport> {
+    hdebug!("device tree @ {:#x}", dtb);
+    // Safe because the pointer is a valid pointer to unaliased memory.
+    let fdt = unsafe{ Fdt::from_ptr(dtb as *const u8).unwrap() };
+    for node in fdt.all_nodes() {
+        if let Some(compatible) = node.compatible() {
+            if compatible.all().any(|s| s == "virtio,mmio") {
+                return virtio_probe(node)
+            }
+        }
+    }
+    None
+}
+
+/// refs: https://github.com/rcore-os/virtio-drivers/blob/master/examples/riscv/src/main.rs
+fn virtio_probe(node: FdtNode) -> Option<MmioTransport> {
+    if let Some(reg) = node.reg().and_then(|mut reg| reg.next()) {
+        let paddr = reg.starting_address as usize;
+        let size = reg.size.unwrap();
+        let vaddr = paddr;
+        hdebug!("walk dt addr={:#x}, size={:#x}", paddr, size);
+        hdebug!(
+            "Device tree node {}: {:?}",
+            node.name,
+            node.compatible().map(Compatible::first)
+        );
+        let header = NonNull::new(vaddr as *mut VirtIOHeader).unwrap();
+        match unsafe{ MmioTransport::new(header) } {
+            Err(e) => { 
+                hwarning!("Error creating VirIO MMIO transport {}", e); 
+                return None
+            },
+            Ok(transport) => {
+                hdebug!(
+                    "Detected virtio MMIO device with vendor id {:#X}, device type {:?}, version {:?}",
+                    transport.vendor_id(),
+                    transport.device_type(),
+                    transport.version()
+                );
+                return Some(transport)
+            }
+        }
+    }
+    None
+}
+
+impl<T: Transport + 'static> BlockDevice for VirtIOBlock<T> {
+    fn read_block(&self, block_id: usize, buf: &mut [u8]) {
+        self.0
+            .exclusive_access()
+            .read_block(block_id, buf)
+            .expect("Error when reading VirtIOBlk");
+    }
+
+    fn write_block(&self, block_id: usize, buf: &[u8]) {
+        self.0
+            .exclusive_access()
+            .write_block(block_id, buf)
+            .expect("Error when writing VirtIOBlk");
+    }
+}
 
 pub struct VirtioHal;
 
@@ -91,20 +149,25 @@ impl Hal for VirtioHal {
 }
 
 
-// unsafe impl<T: Transport> Sync for VirtIOBlock<T>{}
-// unsafe impl<T: Transport> Send for VirtIOBlock<T>{}
 
-pub fn virtio_blk_test<T: Transport>(transport: T) {
-    let mut blk = VirtIOBlk::<VirtioHal, T>::new(transport).expect("failed to create blk driver");
-    let mut input = vec![0xffu8; 512];
-    let mut output = vec![0; 512];
-    for i in 0..32 {
-        for x in input.iter_mut() {
-            *x = i as u8;
+
+pub fn virtio_blk_test() {
+    let mut hypocaust = HYPOCAUST.lock();
+    if let Some(virtio_blk) = &mut hypocaust.virtio_blk {
+        let mut blk = virtio_blk.0.exclusive_access();
+        let mut input = vec![0xffu8; 512];
+        let mut output = vec![0; 512];
+        for i in 0..32 {
+            for x in input.iter_mut() {
+                *x = i as u8;
+            }
+            blk.write_block(i, &input).expect("failed to write");
+            blk.read_block(i, &mut output).expect("failed to read");
+            assert_eq!(input, output);
         }
-        blk.write_block(i, &input).expect("failed to write");
-        blk.read_block(i, &mut output).expect("failed to read");
-        assert_eq!(input, output);
+        hdebug!("virtio-blk test finished");
+    }else{
+        hwarning!("failed to find virtio-blk device");
     }
-    hdebug!("virtio-blk test finished");
+
 }

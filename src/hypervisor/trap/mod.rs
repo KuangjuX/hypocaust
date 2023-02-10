@@ -151,7 +151,7 @@ pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
             let stval = stval::read();
             panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), _trap_cx.sepc, stval);
         },
-        _ => { panic!("scause: {:?}, spec: {:#x}", scause.cause(), sepc)}
+        _ => { panic!("scause: {:?}, spec: {:#x}, stval: {:#x}", scause.cause(), sepc, stval::read())}
     }
 }
 

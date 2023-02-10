@@ -1,6 +1,6 @@
 mod block;
 
-pub use block::{ VirtIOBlock, init_dt };
+pub use block::{ VirtIOBlock, initialize_virtio_blk, virtio_blk_test };
 use spin::Mutex;
 use virtio_drivers::transport::Transport;
 
