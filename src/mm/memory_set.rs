@@ -255,7 +255,6 @@ impl<P> MemorySet<P> where P: PageTable {
                     paddr = paddr.add(page_align_size);
                 }
                 
-                // println!("[hypervisor] start_va: {:#x}, end_va: {:#x}", Into::<usize>::into(start_va), Into::<usize>::into(end_va));
                 let map_area = MapArea::new(
                     start_va, 
                     end_va, 
@@ -281,6 +280,7 @@ impl<P> MemorySet<P> where P: PageTable {
             ),
             None
         );
+
         memory_set
     }
 

@@ -74,4 +74,5 @@ asm:
 
 
 $(FS_IMG):
-	dd if=/dev/zero of=$@ bs=512 count=32
+	cd minikernel && make fs-img 
+	cp minikernel/user/target/$(TARGET)/release/fs.img ./
