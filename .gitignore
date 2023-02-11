@@ -3,4 +3,4 @@ hyper.S
 guest.S
 guest_kernel
 .gdb_history
-fd.img
+fs.img

@@ -39,7 +39,7 @@ $(GUEST_KERNEL_ELF):
 # $(GUEST_KERNEL_BIN): $(GUEST_KERNEL_ELF)
 # 	$(OBJCOPY) $(GUEST_KERNEL_ELF) --strip-all -O binary $@
 
-build: $(GUEST_KERNEL_ELF)
+build: $(GUEST_KERNEL_ELF) $(FS_IMG)
 	cargo build $(GUEST_KERNEL_FEATURE)
 
 $(KERNEL_BIN): build 
@@ -55,6 +55,7 @@ clean:
 	cd minikernel && cargo clean
 	cd minikernel/user && cargo clean
 	rm guest_kernel && rm guest.S && rm hyper.S
+	rm fs.img
 
 qemu-gdb: $(KERNEL_ELF)
 	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234

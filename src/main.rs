@@ -101,7 +101,6 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         if let Some(transport) = hypervisor::device::initialize_virtio_blk(device_tree_blob) {
             let virtio_blk = VirtIOBlock::new(transport);
             let mut hypocaust = HYPOCAUST.lock();
-            hdebug!("create virtio block");
             // 添加 virtio block 设备
             hypocaust.add_virtio_blk(virtio_blk);
             drop(hypocaust);
