@@ -462,6 +462,7 @@ bitflags! {
 #[allow(unused)]
 pub fn remap_test() {
     let hypocaust = HYPOCAUST.lock();
+    let hypocaust = (&*hypocaust).as_ref().unwrap();
     let mut kernel_space = hypocaust.hyper_space.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
@@ -483,13 +484,14 @@ pub fn remap_test() {
         .unwrap()
         .executable(),);
     // 测试 guest ketnel
-    println!("[hypervisor] remap test passed!");
+    hdebug!("remap test passed!");
 }
 
 #[allow(unused)]
 pub fn guest_kernel_test() {
     use crate::constants::layout::GUEST_KERNEL_PHY_START_1;
     let hypocaust = HYPOCAUST.lock();
+    let hypocaust = (&*hypocaust).as_ref().unwrap();
     let mut kernel_space = hypocaust.hyper_space.exclusive_access();
 
     let guest_kernel_text: VirtAddr = GUEST_KERNEL_PHY_START_1.into();
@@ -501,6 +503,6 @@ pub fn guest_kernel_test() {
         core::ptr::read(GUEST_KERNEL_PHY_START_1 as *const u32);
     }
     // 测试 guest ketnel
-    println!("[hypervisor] guest kernel test passed!");
+    hdebug!("guest kernel test passed!");
 }
 

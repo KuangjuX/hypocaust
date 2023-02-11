@@ -10,6 +10,7 @@ use crate::page_table::PageTableSv39;
 
 pub fn vm_init(guest_kernel_memory: &MemorySet<PageTableSv39>) {
     let hypocaust = HYPOCAUST.lock();
+    let hypocaust = (&*hypocaust).as_ref().unwrap();
     let mut hyper_space = hypocaust.hyper_space.exclusive_access();
     hyper_space.hyper_load_guest_kernel(guest_kernel_memory);
     hyper_space.activate();

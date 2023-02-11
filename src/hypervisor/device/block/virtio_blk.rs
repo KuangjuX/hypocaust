@@ -4,7 +4,7 @@ use alloc::vec;
 use virtio_drivers::transport::Transport;
 use virtio_drivers::transport::mmio::{VirtIOHeader, MmioTransport};
 use virtio_drivers::{Hal, device::blk::VirtIOBlk};
-use fdt::{ Fdt, node::FdtNode, standard_nodes::Compatible };
+use fdt::{ Fdt, node::FdtNode};
 
 use crate::hypervisor::HYPOCAUST;
 use crate::hypervisor::hyp_alloc::{frame_alloc, frame_dealloc};
@@ -37,7 +37,9 @@ pub fn initialize_virtio_blk(dtb: usize) -> Option<MmioTransport> {
     for node in fdt.all_nodes() {
         if let Some(compatible) = node.compatible() {
             if compatible.all().any(|s| s == "virtio,mmio") {
-                return virtio_probe(node)
+                if let Some(transport) = virtio_probe(node) {
+                    return Some(transport)
+                }
             }
         }
     }
@@ -48,18 +50,11 @@ pub fn initialize_virtio_blk(dtb: usize) -> Option<MmioTransport> {
 fn virtio_probe(node: FdtNode) -> Option<MmioTransport> {
     if let Some(reg) = node.reg().and_then(|mut reg| reg.next()) {
         let paddr = reg.starting_address as usize;
-        let size = reg.size.unwrap();
         let vaddr = paddr;
-        hdebug!("walk dt addr={:#x}, size={:#x}", paddr, size);
-        hdebug!(
-            "Device tree node {}: {:?}",
-            node.name,
-            node.compatible().map(Compatible::first)
-        );
         let header = NonNull::new(vaddr as *mut VirtIOHeader).unwrap();
         match unsafe{ MmioTransport::new(header) } {
-            Err(e) => { 
-                hwarning!("Error creating VirIO MMIO transport {}", e); 
+            Err(_) => { 
+                // hwarning!("Error creating VirIO MMIO transport {}", e); 
                 return None
             },
             Ok(transport) => {
@@ -101,7 +96,8 @@ impl Hal for VirtioHal {
     /// which the driver can use to access it.
     fn dma_alloc(pages: usize, _direction: virtio_drivers::BufferDirection) -> (virtio_drivers::PhysAddr, core::ptr::NonNull<u8>) {
         let hypocaust = HYPOCAUST.lock();
-        let mut queue = hypocaust.frame_queue.lock();
+        let hypocaust = (&*hypocaust).as_ref().unwrap();
+        let mut queue = hypocaust.frame_queue.exclusive_access();
         let mut ppn_base = PhysPageNum(0);
         for i in 0..pages {
             let frame = frame_alloc().unwrap();
@@ -153,8 +149,9 @@ impl Hal for VirtioHal {
 
 pub fn virtio_blk_test() {
     let mut hypocaust = HYPOCAUST.lock();
-    if let Some(virtio_blk) = &mut hypocaust.virtio_blk {
-        let mut blk = virtio_blk.0.exclusive_access();
+    let hypocaust = (&mut *hypocaust).as_mut().unwrap();
+    if let Some(blk) = hypocaust.virtio_blk.as_mut() {
+        let mut blk = blk.0.exclusive_access();
         let mut input = vec![0xffu8; 512];
         let mut output = vec![0; 512];
         for i in 0..32 {
@@ -167,7 +164,7 @@ pub fn virtio_blk_test() {
         }
         hdebug!("virtio-blk test finished");
     }else{
-        hwarning!("failed to find virtio-blk device");
+        hwarning!("failed to find virtio blk device");
     }
 
 }
