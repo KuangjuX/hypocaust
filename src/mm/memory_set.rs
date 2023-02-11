@@ -462,6 +462,7 @@ bitflags! {
 #[allow(unused)]
 pub fn remap_test() {
     let hypocaust = HYPOCAUST.lock();
+    let hypocaust = (&*hypocaust).as_ref().unwrap();
     let mut kernel_space = hypocaust.hyper_space.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
@@ -490,6 +491,7 @@ pub fn remap_test() {
 pub fn guest_kernel_test() {
     use crate::constants::layout::GUEST_KERNEL_PHY_START_1;
     let hypocaust = HYPOCAUST.lock();
+    let hypocaust = (&*hypocaust).as_ref().unwrap();
     let mut kernel_space = hypocaust.hyper_space.exclusive_access();
 
     let guest_kernel_text: VirtAddr = GUEST_KERNEL_PHY_START_1.into();

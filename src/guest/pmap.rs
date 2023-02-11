@@ -333,6 +333,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
         let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
         let gpt = P::from_ppn(root_hppn);
+        let hypocaust = HYPOCAUST.lock();
+        let hypocaust = (&*hypocaust).as_ref().unwrap();
         if self.shadow_state.shadow_page_tables.shadow_page_table(satp).is_none() {
             // 如果影子页表中没有发现，新建影子页表
             let mut spt;
@@ -358,11 +360,11 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
             // 为 `SPT` 映射跳板页
             // 无论是 guest spt 还是 user spt 都要映射跳板页与 Trap Context
-            let trampoline_hppn = HYPOCAUST.lock().hyper_space.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+            let trampoline_hppn = hypocaust.hyper_space.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
             spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
 
             let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-            let trapctx_hppn = HYPOCAUST.lock().hyper_space.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+            let trapctx_hppn = hypocaust.hyper_space.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
 
             // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
@@ -389,7 +391,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     synchronize_page_table::<P>(hart_id, satp);
                     let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
                     // 为 `SPT` 映射跳板页
-                    let trampoline_hppn = HYPOCAUST.lock().hyper_space.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+                    let trampoline_hppn = hypocaust.hyper_space.exclusive_access().translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
                         if !pte.is_valid() {
                             htracking!("user remap trampoline");
@@ -401,7 +403,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     }
                         
                     let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                    let trapctx_hppn = HYPOCAUST.lock().hyper_space.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
+                    let trapctx_hppn = hypocaust.hyper_space.exclusive_access().translate(trapctx_hvpn).unwrap().ppn();
                     if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
                         if !pte.is_valid() {
                             htracking!("user remap trap context");

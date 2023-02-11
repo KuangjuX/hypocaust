@@ -125,7 +125,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 获取内核栈地址
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
         // 将内核栈地址进行映射
-        HYPOCAUST.lock().hyper_space.exclusive_access().insert_framed_area(
+        let hypocaust = HYPOCAUST.lock();
+        let hypocaust = (&*hypocaust).as_ref().unwrap();
+        hypocaust.hyper_space.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
@@ -148,7 +150,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         *trap_cx = TrapContext::app_init_context(
             GUEST_KERNEL_VIRT_START,
             0,
-            HYPOCAUST.lock().hyper_space.exclusive_access().token(),
+            hypocaust.hyper_space.exclusive_access().token(),
             kernel_stack_top,
             trap_handler as usize,
         );
