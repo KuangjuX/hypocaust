@@ -54,8 +54,7 @@ clean:
 	cargo clean
 	cd minikernel && cargo clean
 	cd minikernel/user && cargo clean
-	rm guest_kernel && rm guest.S && rm hyper.S
-	rm fs.img
+	rm guest_kernel *.S $(FS_IMG)
 
 qemu-gdb: $(KERNEL_ELF)
 	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234
