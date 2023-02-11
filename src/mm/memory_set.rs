@@ -483,7 +483,7 @@ pub fn remap_test() {
         .unwrap()
         .executable(),);
     // 测试 guest ketnel
-    println!("[hypervisor] remap test passed!");
+    hdebug!("remap test passed!");
 }
 
 #[allow(unused)]
@@ -501,6 +501,6 @@ pub fn guest_kernel_test() {
         core::ptr::read(GUEST_KERNEL_PHY_START_1 as *const u32);
     }
     // 测试 guest ketnel
-    println!("[hypervisor] guest kernel test passed!");
+    hdebug!("guest kernel test passed!");
 }
 

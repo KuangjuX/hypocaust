@@ -37,7 +37,9 @@ pub fn initialize_virtio_blk(dtb: usize) -> Option<MmioTransport> {
     for node in fdt.all_nodes() {
         if let Some(compatible) = node.compatible() {
             if compatible.all().any(|s| s == "virtio,mmio") {
-                return virtio_probe(node)
+                if let Some(transport) = virtio_probe(node) {
+                    return Some(transport)
+                }
             }
         }
     }

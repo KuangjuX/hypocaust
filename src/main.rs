@@ -105,6 +105,8 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
             // 添加 virtio block 设备
             hypocaust.add_virtio_blk(virtio_blk);
             drop(hypocaust);
+            // 测试 virtio block
+            hypervisor::device::virtio_blk_test();
         }
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
         // 初始化虚拟内存
@@ -114,8 +116,6 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         mm::remap_test();
         // 测试 guest kernel 内存映射
         mm::guest_kernel_test();
-        // 测试 virtio block
-        hypervisor::device::virtio_blk_test();
         // 开启时钟中断
         hypervisor::trap::enable_timer_interrupt();
         timer::set_default_next_trigger();
