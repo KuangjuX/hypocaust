@@ -48,7 +48,7 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
                     pte = ctx.x[rs2];
                 },
                 riscv_decode::Instruction::Sb(_) | riscv_decode::Instruction::Sw(_) => {
-                    panic!("Unsporrted instruction");
+                    panic!("Unsporrted instruction sepc -> {:#x}, stval: {:#x}", ctx.sepc, stval::read());
                 }
                 _ => { return false }
             }

@@ -111,7 +111,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 }
             }
             riscv_decode::Instruction::Wfi => {}
-            _ => { panic!("[hypervisor] Unrecognized instruction, sepc: {:#x}, scause: {:?}", ctx.sepc, scause::read().cause())}
+            _ => panic!("Unrecognized instruction, sepc: {:#x}, scause: {:?}, inst: {:?}", ctx.sepc, scause::read().cause(), inst)
         }
     }else{ 
         forward_exception(guest, ctx) 
