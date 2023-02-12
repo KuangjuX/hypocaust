@@ -186,8 +186,6 @@ impl<P> MemorySet<P> where P: PageTable {
             let mut user_area = area.clone();
             // 添加用户标志
             user_area.map_perm |= MapPermission::U;
-            // 均设置为不可写，以便陷入虚拟机
-            // user_area.map_perm &= !MapPermission::W;
             memory_set.push(user_area.clone(), None);
         }
         // 创建跳板页映射
@@ -281,6 +279,16 @@ impl<P> MemorySet<P> where P: PageTable {
             None
         );
 
+        // memory_set.push(MapArea::new(
+        //     VirtAddr(0x1000_1000), 
+        //     VirtAddr(0x1000_2000), 
+        //     Some(PhysAddr(0x1000_1000)), 
+        //     Some(PhysAddr(0x1000_2000)), 
+        //     MapType::Linear, 
+        //     MapPermission::R | MapPermission::W
+        //     ),
+        //     None
+        // );
         memory_set
     }
 

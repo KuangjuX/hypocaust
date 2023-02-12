@@ -37,7 +37,6 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     let mut pte = 0;
     if let Some(_translation) = guest.translate_guest_vaddr(guest_va) {
         // 获得翻译后的物理地址
-        // hdebug!("translation: {:#x}", translation);
         if let Some(inst) = inst {
             match inst {
                 riscv_decode::Instruction::Sd(i) => {
@@ -56,6 +55,10 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
         }
         let pte = PageTableEntry{ bits: pte };       
         let guest_pte_addr = gpa2hpa(guest_va, guest.guest_id);
+        if guest_pte_addr >=  0x4000000000 {
+            print_guest_backtrace(guest.shadow_state.shadow_page_tables.guest_page_table().unwrap(), guest.shadow_state.csrs.satp, ctx);
+            panic!("guest va -> {:#x}, guest_pte_addr: {:#x}, sepc: {:#x}, translation: {:#x}", guest_va, guest_pte_addr, ctx.sepc, _translation);
+        }
         unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
 
         guest.synchronize_page_table(guest_va, pte);

@@ -76,3 +76,4 @@ asm:
 $(FS_IMG):
 	cd minikernel && make fs-img 
 	cp minikernel/user/target/$(TARGET)/release/fs.img ./
+	# touch fs.img

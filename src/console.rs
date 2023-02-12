@@ -55,3 +55,10 @@ macro_rules! htracking {
     }
 }
 
+#[macro_export]
+macro_rules! herror {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        $crate::console::print(format_args!(concat!("\x1b[1;31m[Error] ", $fmt, "\x1b[0m\n") $(, $($arg)+)?));
+    }
+}
+

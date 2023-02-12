@@ -97,13 +97,6 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         // 初始化堆及帧分配器
         hypervisor::hyp_alloc::heap_init();
         hypervisor::initialize_vmm(meta);
-        // 获取 `transport`
-        // if let Some(transport) = hypervisor::device::initialize_virtio_blk(device_tree_blob) {
-        //     let virtio_blk = VirtIOBlock::new(transport);
-        //     hypervisor::add_virtio_blk(virtio_blk);
-        //     // 测试 virtio block
-        //     hypervisor::device::virtio_blk_test();
-        // }
         let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
         // 初始化虚拟内存
         mm::vm_init(&guest_kernel_memory);

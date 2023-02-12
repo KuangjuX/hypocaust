@@ -44,3 +44,7 @@ impl Device {
     }
 }
 
+pub fn is_device_access(guest_pa: usize) -> bool {
+    guest_pa >= 0x1000_1000 && guest_pa < 0x1000_2000
+}
+

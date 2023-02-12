@@ -14,6 +14,7 @@ use crate::device_emu::VirtDevice;
 mod switch;
 mod context;
 mod pmap;
+pub mod sbi;
 
 use context::TaskContext;
 use alloc::vec::Vec;
