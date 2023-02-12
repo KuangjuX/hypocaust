@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
 use crate::debug::PageDebug;
+use crate::device_emu::is_device_access;
 use crate::hypervisor::HYPOCAUST;
 use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
 use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT};
@@ -249,7 +250,12 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
                     let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags());
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
-                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags() | PTEFlags::U);
+                    let host_pte;
+                    if !is_device_access(guest_pte.ppn().0 << 12) {
+                        host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags() | PTEFlags::U);
+                    }else{
+                        host_pte = PageTableEntry::new(PhysPageNum::from(guest_pte.ppn().0) , guest_pte.flags() | PTEFlags::U);
+                    }
                     host_ptes[index] = host_pte;
                 }
             }
@@ -306,8 +312,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     pub fn translate_guest_vpte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         if let Some(spt) = self.shadow_state.shadow_page_tables.shadow_page_table(self.shadow_state.csrs.satp) {
             // 由于 GHA 与 GPA 是同等映射的，因此翻译成的物理地址可以直接当虚拟地址用
-            let pte = spt.translate(vpn);
-            pte
+            spt.translate(vpn)
         }else{
             // hwarning!("translate guest va from GPA mode?");
             self.translate_guest_ppte(vpn)
@@ -346,6 +351,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     mode = PageTableRoot::GVA;
                     spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
                     self.shadow_state.shadow_page_tables.guest_satp = Some(satp);
+
+                    assert_eq!(spt.translate(VirtPageNum::from(0x10001)).unwrap().ppn().0, 0x10001);
                 }
                 PageTableRoot::UVA => {
                     // 将 mode 设置为 `UVA`

@@ -1,7 +1,9 @@
 mod uart;
 mod plic;
+mod virtio;
 pub use uart::Uart;
 pub use plic::HostPlic;
+pub use virtio::{ VirtIO, is_device_access };
 
 
 /// Software emulated device used in VMM

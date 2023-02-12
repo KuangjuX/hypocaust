@@ -9,7 +9,8 @@ use crate::debug::PageDebug;
 use crate::constants::csr::sip::STIP_BIT;
 use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
-use crate::sbi::{ console_putchar, SBI_CONSOLE_PUTCHAR, set_timer, SBI_SET_TIMER, SBI_CONSOLE_GETCHAR, console_getchar };
+use crate::sbi::{ console_putchar, set_timer, console_getchar, shutdown };
+use crate::guest::sbi::{ SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR, SBI_SET_TIMER, SBI_SHUTDOWN };
 use crate::guest::GuestKernel;
 
 
@@ -35,6 +36,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                         let c = console_getchar();
                         ctx.x[10] = c;
                     }
+                    SBI_SHUTDOWN => shutdown(),
                     _ => {
                         // hdebug!("forward exception: sepc -> {:#x}", ctx.sepc);
                         forward_exception(guest, ctx);
@@ -103,13 +105,13 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 if i.rs1() == 0 {
-                    unsafe{ core::arch::asm!("sfence.vma") };
+                    // unsafe{ core::arch::asm!("sfence.vma") };
                 }else{
                     unimplemented!()
                 }
             }
             riscv_decode::Instruction::Wfi => {}
-            _ => { panic!("[hypervisor] Unrecognized instruction, sepc: {:#x}, scause: {:?}", ctx.sepc, scause::read().cause())}
+            _ => panic!("Unrecognized instruction, sepc: {:#x}, scause: {:?}, inst: {:?}", ctx.sepc, scause::read().cause(), inst)
         }
     }else{ 
         forward_exception(guest, ctx) 

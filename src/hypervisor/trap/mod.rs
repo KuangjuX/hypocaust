@@ -19,7 +19,7 @@ mod forward;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
-
+use crate::debug::print_hypervisor_backtrace;
 
 use core::arch::{asm, global_asm};
 use riscv::register::{
@@ -32,6 +32,7 @@ use self::inst_fault::{ifault, decode_instruction_at_address};
 use self::page_fault::handle_page_fault;
 use self::device::{ handle_qemu_virt, handle_time_interrupt };
 use self::forward::{forward_exception, maybe_forward_interrupt};
+
 
 global_asm!(include_str!("trap.S"));
 
@@ -143,7 +144,7 @@ pub fn trap_return() -> ! {
 
 #[no_mangle]
 pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
-    // print_hypervisor_backtrace(_trap_cx);
+    print_hypervisor_backtrace(_trap_cx);
     let scause= scause::read();
     let sepc = sepc::read();
     match scause.cause() {

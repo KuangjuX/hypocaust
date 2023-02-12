@@ -8,7 +8,7 @@ use core::panic::PanicInfo;
 fn panic(info: &PanicInfo) -> ! {
     if let Some(location) = info.location() {
         println!(
-            "[hypervisor] Panicked at {}:{} {}",
+            "\x1b[1;31m[hypervisor] Panicked at {}:{} {}\x1b[0m",
             location.file(),
             location.line(),
             info.message().unwrap()
