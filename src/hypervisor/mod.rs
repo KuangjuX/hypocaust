@@ -18,7 +18,6 @@ use self::trap::TrapContext;
 
 
 
-pub mod device;
 pub mod hyp_alloc;
 pub mod trap;
 pub mod fdt;
