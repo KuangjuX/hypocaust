@@ -2,7 +2,7 @@ use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
 use crate::constants::csr::sip::SSIP;
 use crate::constants::csr::status::STATUS_SIE_BIT;
 use crate::debug::PageDebug;
-use crate::hypervisor::Hypervisor;
+use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable};
 use crate::mm::{MemorySet, MapPermission};
 use crate::hypervisor::trap::{TrapContext, trap_handler};
@@ -22,28 +22,6 @@ use riscv::addr::BitField;
 pub use self::context::ShadowState;
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
 
-
-// pub fn current_user_token() -> usize {
-//     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-//     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
-// }
-
-// pub fn current_trap_context_ppn() -> PhysPageNum {
-//     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-//     let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory_set;
-//     let trap_context: VirtAddr = TRAP_CONTEXT.into();
-//     let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
-//     trap_context_ppn
-// }
-
-// pub fn current_trap_cx() -> &'static mut TrapContext {
-//     let trap_context_ppn = current_trap_context_ppn();
-//     trap_context_ppn.get_mut() 
-// }
-
-
-
-
 /// Guest Kernel 结构体
 pub struct GuestKernel<P: PageTable + PageDebug> {
     pub memory_set: MemorySet<P>,
@@ -58,8 +36,9 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
 }
 
 impl<P> GuestKernel<P> where P: PageDebug + PageTable {
-    pub fn new(memory_set: MemorySet<P>, guest_id: usize, hypervisor: &Hypervisor<P>) -> Self {
+    pub fn new(memory_set: MemorySet<P>, guest_id: usize) -> Self {
         // 获取中断上下文的物理地址
+        let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
             .unwrap()
@@ -67,7 +46,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 获取内核栈地址
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
         // 将内核栈地址进行映射
-        hypervisor.hyper_space.exclusive_access().insert_framed_area(
+        hypervisor_memory.insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
@@ -90,7 +69,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         *trap_cx = TrapContext::app_init_context(
             GUEST_KERNEL_VIRT_START,
             0,
-            hypervisor.hyper_space.exclusive_access().token(),
+            hypervisor_memory.token(),
             kernel_stack_top,
             trap_handler as usize,
         );

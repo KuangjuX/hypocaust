@@ -1,7 +1,7 @@
 //! Implementation of [`MapArea`] and [`MemorySet`].
 
 use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
-use crate::hypervisor::HYPOCAUST;
+use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
 use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::page_table::{StepByOne, VPNRange, PPNRange};
@@ -279,16 +279,6 @@ impl<P> MemorySet<P> where P: PageTable {
             None
         );
 
-        // memory_set.push(MapArea::new(
-        //     VirtAddr(0x1000_1000), 
-        //     VirtAddr(0x1000_2000), 
-        //     Some(PhysAddr(0x1000_1000)), 
-        //     Some(PhysAddr(0x1000_2000)), 
-        //     MapType::Linear, 
-        //     MapPermission::R | MapPermission::W
-        //     ),
-        //     None
-        // );
         memory_set
     }
 
@@ -469,9 +459,7 @@ bitflags! {
 
 #[allow(unused)]
 pub fn remap_test() {
-    let hypocaust = HYPOCAUST.lock();
-    let hypocaust = (&*hypocaust).as_ref().unwrap();
-    let mut kernel_space = hypocaust.hyper_space.exclusive_access();
+    let mut kernel_space = HYPERVISOR_MEMORY.exclusive_access();
     let mid_text: VirtAddr = ((stext as usize + etext as usize) / 2).into();
     let mid_rodata: VirtAddr = ((srodata as usize + erodata as usize) / 2).into();
     let mid_data: VirtAddr = ((sdata as usize + edata as usize) / 2).into();
@@ -498,9 +486,7 @@ pub fn remap_test() {
 #[allow(unused)]
 pub fn guest_kernel_test() {
     use crate::constants::layout::GUEST_KERNEL_PHY_START_1;
-    let hypocaust = HYPOCAUST.lock();
-    let hypocaust = (&*hypocaust).as_ref().unwrap();
-    let mut kernel_space = hypocaust.hyper_space.exclusive_access();
+    let mut kernel_space = HYPERVISOR_MEMORY.exclusive_access();
 
     let guest_kernel_text: VirtAddr = GUEST_KERNEL_PHY_START_1.into();
 
