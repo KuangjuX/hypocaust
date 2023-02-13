@@ -111,7 +111,11 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 }
             }
             riscv_decode::Instruction::Wfi => {}
-            _ => panic!("Unrecognized instruction, sepc: {:#x}, scause: {:?}, inst: {:?}", ctx.sepc, scause::read().cause(), inst)
+            _ => {
+                let paddr = guest.translate_guest_vaddr(ctx.sepc).unwrap();
+                let inst = unsafe{ core::ptr::read(paddr as *const u32) };
+                panic!("Unrecognized instruction, sepc: {:#x}, scause: {:?}, inst: {:#x}", ctx.sepc, scause::read().cause(), inst)
+            }
         }
     }else{ 
         forward_exception(guest, ctx) 
