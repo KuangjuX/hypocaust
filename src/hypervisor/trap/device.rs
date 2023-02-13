@@ -55,30 +55,3 @@ pub fn is_device_access(guest_pa: usize) -> bool {
     guest_pa >= 0x1000_1000 && guest_pa < 0x1000_1000 + 1000
 }
 
-// pub fn handle_device_access<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &TrapContext, guest_pa: usize) {
-//     let device = ((guest_pa - 0x1000_1000) / 0x1000) as usize;
-//     // 目前只支持 0 号设备
-//     assert_eq!(device, 0);
-//     let offset = guest_pa & 0xfff;
-//     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
-//     match inst {
-//         Some(riscv_decode::Instruction::Lw(i)) => {
-
-//         }
-//         Some(riscv_decode::Instruction::Lb(i)) => {
-
-//         }
-//         Some(riscv_decode::Instruction::Sw(i)) => {
-
-//         }
-//         Some(instr) => {
-//             hwarning!("VIRTIO: Instruction {:?} used to target addr {:#x} from pc {:#x}", instr, guest_pa, ctx.sepc);
-//             loop{}
-//         }
-//         None => {
-//             hwarning!("Unrecognized instruction targetting VIRTIO {:#x} at {:#x}", guest_pa, ctx.sepc);
-//             loop{}
-//         }
-//     }
-//     ctx.sepc += len;
-// }

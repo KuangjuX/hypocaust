@@ -18,8 +18,8 @@ mod device;
 mod forward;
 
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
-use crate::guest::{current_user_token, current_trap_cx, GUEST_KERNEL_MANAGER};
 use crate::debug::print_hypervisor_backtrace;
+use crate::hypervisor::HYPOCAUST;
 
 use core::arch::{asm, global_asm};
 use riscv::register::{
@@ -75,13 +75,14 @@ pub fn disable_timer_interrupt() {
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
-    let ctx = current_trap_cx();
+    unsafe{ HYPOCAUST.force_unlock(); }
+    let mut hypervisor = HYPOCAUST.lock();
+    let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
+    let ctx = hypervisor.current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
     // get guest kernel
-    let mut inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let guest = &mut inner.kernels[id];
+    let guest = hypervisor.current_guest();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             ifault(guest, ctx);
@@ -113,7 +114,7 @@ pub fn trap_handler() -> ! {
             );
         }
     }
-    drop(inner);
+    drop(hypervisor);
     trap_return();
 }
 
@@ -124,7 +125,10 @@ pub fn trap_handler() -> ! {
 pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
-    let user_satp = current_user_token();
+    unsafe{ HYPOCAUST.force_unlock(); }
+    let hypervisor = HYPOCAUST.lock();
+    let hypervisor = {&*hypervisor}.as_ref().unwrap();
+    let user_satp = hypervisor.current_user_token();
     extern "C" {
         fn __alltraps();
         fn __restore();

@@ -338,6 +338,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
         let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
         let gpt = P::from_ppn(root_hppn);
+        unsafe{ HYPOCAUST.force_unlock() };
         let hypocaust = HYPOCAUST.lock();
         let hypocaust = (&*hypocaust).as_ref().unwrap();
         if self.shadow_state.shadow_page_tables.shadow_page_table(satp).is_none() {

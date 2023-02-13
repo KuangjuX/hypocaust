@@ -2,8 +2,8 @@ use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
 use crate::constants::csr::sip::SSIP;
 use crate::constants::csr::status::STATUS_SIE_BIT;
 use crate::debug::PageDebug;
-use crate::hypervisor::HYPOCAUST;
-use crate::page_table::{VirtAddr, PhysPageNum, PageTable, PageTableSv39};
+use crate::hypervisor::Hypervisor;
+use crate::page_table::{VirtAddr, PhysPageNum, PageTable};
 use crate::mm::{MemorySet, MapPermission};
 use crate::hypervisor::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
@@ -11,94 +11,35 @@ use crate::constants::csr;
 use crate::device_emu::VirtDevice;
 
 
-mod switch;
-mod context;
+pub mod switch;
+pub mod context;
 mod pmap;
 pub mod sbi;
 
 use context::TaskContext;
-use alloc::vec::Vec;
 use riscv::addr::BitField;
-use switch::__switch;
-use lazy_static::lazy_static;
-use crate::sync::UPSafeCell;
-
-
 
 pub use self::context::ShadowState;
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
 
 
+// pub fn current_user_token() -> usize {
+//     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
+//     GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
+// }
 
-lazy_static! {
-    pub static ref GUEST_KERNEL_MANAGER: GuestKernelManager<PageTableSv39> = GuestKernelManager::new();
-}
+// pub fn current_trap_context_ppn() -> PhysPageNum {
+//     let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
+//     let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory_set;
+//     let trap_context: VirtAddr = TRAP_CONTEXT.into();
+//     let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
+//     trap_context_ppn
+// }
 
-pub struct GuestKernelManager<P: PageTable + PageDebug> {
-    pub inner: UPSafeCell<GuestKernelManagerInner<P>>
-}
-
-pub struct GuestKernelManagerInner<P: PageTable + PageDebug> {
-    pub kernels: Vec<GuestKernel<P>>,
-    pub run_id: usize
-}
-
-impl<P> GuestKernelManager<P> where P: PageDebug + PageTable {
-    pub fn new() -> Self {
-        Self {
-           inner: unsafe{
-            UPSafeCell::new(
-                GuestKernelManagerInner{
-                    kernels: Vec::new(),
-                    run_id: 0
-                }
-            )
-           }
-        }
-    }
-
-    pub fn push(&self, kernel: GuestKernel<P>) {
-        self.inner.exclusive_access().kernels.push(kernel)
-    }
-}
-
-pub fn run_guest_kernel() -> ! {
-    let inner = GUEST_KERNEL_MANAGER.inner.exclusive_access();
-    let id = inner.run_id;
-    let guest_kernel = &inner.kernels[id];
-    let task_cx_ptr = &guest_kernel.task_cx as *const TaskContext;
-    drop(inner);
-    let mut _unused = TaskContext::zero_init();
-    hdebug!("run guest kernel......");
-    // before this, we should drop local variables that must be dropped manually
-    unsafe {
-        __switch(&mut _unused as *mut _, task_cx_ptr);
-    }
-    panic!("unreachable in run_first_task!");
-}
-
-pub fn current_run_id() -> usize {
-    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-    id
-}
-
-pub fn current_user_token() -> usize {
-    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-    GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].get_user_token()
-}
-
-pub fn current_trap_context_ppn() -> PhysPageNum {
-    let id = GUEST_KERNEL_MANAGER.inner.exclusive_access().run_id;
-    let kernel_memory = &GUEST_KERNEL_MANAGER.inner.exclusive_access().kernels[id].memory_set;
-    let trap_context: VirtAddr = TRAP_CONTEXT.into();
-    let trap_context_ppn= kernel_memory.translate(trap_context.floor()).unwrap().ppn();
-    trap_context_ppn
-}
-
-pub fn current_trap_cx() -> &'static mut TrapContext {
-    let trap_context_ppn = current_trap_context_ppn();
-    trap_context_ppn.get_mut() 
-}
+// pub fn current_trap_cx() -> &'static mut TrapContext {
+//     let trap_context_ppn = current_trap_context_ppn();
+//     trap_context_ppn.get_mut() 
+// }
 
 
 
@@ -117,7 +58,7 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
 }
 
 impl<P> GuestKernel<P> where P: PageDebug + PageTable {
-    pub fn new(memory_set: MemorySet<P>, guest_id: usize) -> Self {
+    pub fn new(memory_set: MemorySet<P>, guest_id: usize, hypervisor: &Hypervisor<P>) -> Self {
         // 获取中断上下文的物理地址
         let trap_cx_ppn = memory_set
             .translate(VirtAddr::from(TRAP_CONTEXT).into())
@@ -126,9 +67,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // 获取内核栈地址
         let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
         // 将内核栈地址进行映射
-        let hypocaust = HYPOCAUST.lock();
-        let hypocaust = (&*hypocaust).as_ref().unwrap();
-        hypocaust.hyper_space.exclusive_access().insert_framed_area(
+        hypervisor.hyper_space.exclusive_access().insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
@@ -151,7 +90,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         *trap_cx = TrapContext::app_init_context(
             GUEST_KERNEL_VIRT_START,
             0,
-            hypocaust.hyper_space.exclusive_access().token(),
+            hypervisor.hyper_space.exclusive_access().token(),
             kernel_stack_top,
             trap_handler as usize,
         );
