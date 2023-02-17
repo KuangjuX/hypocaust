@@ -151,13 +151,16 @@ pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec
             non_leaf_vpns.push(guest_page_table_vpn);
             // 获得 guest pte 的物理页号
             let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
-            // 获得 guest pte 页表项内容
-            let guest_ptes = guest_page_table_ppn.get_pte_array();
-            for guest_pte in guest_ptes.iter(){
-                if guest_pte.is_valid() && walk < 2 {
-                    // 非叶子页表项
-                    buffer.push(VirtPageNum::from(guest_pte.ppn().0));
-                }else if guest_pte.is_valid() && walk == 2 {
+            if guest_page_table_ppn.0 >= 0x3ffffff {
+                herror!("Error guest page table ppn {:#x}", guest_page_table_ppn.0);
+            }else{
+                // 获得 guest pte 页表项内容
+                let guest_ptes = guest_page_table_ppn.get_pte_array();
+                for guest_pte in guest_ptes.iter(){
+                    if guest_pte.is_valid() && walk < 2 {
+                        // 非叶子页表项
+                        buffer.push(VirtPageNum::from(guest_pte.ppn().0));
+                    }else if guest_pte.is_valid() && walk == 2 {}
                 }
             }
         }

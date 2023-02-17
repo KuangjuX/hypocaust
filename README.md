@@ -14,7 +14,7 @@
 ## Build 
 ```
 git clone https://github.com/KuangjuX/hypocaust.git
-cd hypocause
+cd hypocaust
 git submodule update --init
 
 make qemu
