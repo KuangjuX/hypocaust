@@ -1,6 +1,7 @@
 # Hypocaust 
 **Note:**  
-Currently developing the hardware-assisted virtualization project **hypocaust** 
+Currently developing the hardware-assisted virtualization project [**hypocaust-2**](https://github.com/KuangjuX/hypocaust-2)  
+
 ## Overview
 **Hypocaust** is an experimental S-mode trap and emulate type-1 hypervisor for RISC-V. It is currently targeted at QEMU's virt machine type. It can run on [RustSBI](https://github.com/rustsbi/rustsbi) currently. It can boot and run `minikernel` now.   
   
@@ -17,7 +18,7 @@ Currently developing the hardware-assisted virtualization project **hypocaust**
 ## Build 
 ```
 git clone https://github.com/KuangjuX/hypocaust.git
-cd hypocause
+cd hypocaust
 git submodule update --init
 
 make qemu
