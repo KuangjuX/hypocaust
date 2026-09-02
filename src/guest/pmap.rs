@@ -47,6 +47,14 @@ struct CachedShadowPageTable<P: PageTable + PageDebug> {
     tlb_dirty: bool,
 }
 
+#[derive(Copy, Clone)]
+struct GuestPageTablePageState {
+    /// PR #27 (`feature/track-valid-pte-count`) keys metadata by the
+    /// guest-physical page containing PTEs, so shared pages have one live count.
+    vpn: VirtPageNum,
+    valid_pte_count: usize,
+}
+
 pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// all shadow page tables (satp, spt)
     spts: UnsafeCell<BTreeMap<usize, CachedShadowPageTable<P>>>,
@@ -60,6 +68,9 @@ pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// PR #26 (`feature/shadow-page-table-asid`) reserves ASID 0 for Hypocaust
     /// and assigns stable, nonzero identifiers to guest shadow roots.
     next_asid: usize,
+    /// PR #27 (`feature/track-valid-pte-count`) records V=1 entries while full
+    /// walks inspect each page, avoiding a later 512-entry invalidation scan.
+    valid_pte_counts: BTreeMap<VirtPageNum, usize>,
 }
 
 impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
@@ -70,6 +81,7 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
             guest_satp: None,
             pte_generation: 0,
             next_asid: 1,
+            valid_pte_counts: BTreeMap::new(),
         }
     }
 
@@ -136,6 +148,39 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         }
     }
 
+    fn record_page_table_pages(&mut self, pages: &[GuestPageTablePageState]) {
+        pages.iter().for_each(|page| {
+            self.valid_pte_counts.insert(page.vpn, page.valid_pte_count);
+        });
+    }
+
+    /// PR #27 (`feature/track-valid-pte-count`) updates the page's V=1
+    /// population in O(1). A page first discovered through a trapped write is
+    /// counted once from its updated contents, then follows the incremental path.
+    fn update_valid_pte_count<F: FnOnce() -> usize>(
+        &mut self,
+        page_vpn: VirtPageNum,
+        old_pte: PageTableEntry,
+        new_pte: PageTableEntry,
+        fallback_count: F,
+    ) -> (usize, bool) {
+        if let Some(count) = self.valid_pte_counts.get_mut(&page_vpn) {
+            match (old_pte.is_valid(), new_pte.is_valid()) {
+                (false, true) => *count += 1,
+                (true, false) => {
+                    assert!(*count > 0, "valid PTE count underflow");
+                    *count -= 1;
+                }
+                _ => {}
+            }
+            (*count, false)
+        } else {
+            let fallback_count = fallback_count();
+            self.valid_pte_counts.insert(page_vpn, fallback_count);
+            (fallback_count, true)
+        }
+    }
+
     pub fn guest_page_table(&self) -> Option<&mut P> {
         let inner = self.spts();
         if let Some(guest_satp) = self.guest_satp {
@@ -187,16 +232,8 @@ fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     }
 }
 
-fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
-    let mut drop = true;
-    let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
-    let guest_ptes = guest_ppn.get_pte_array();
-    guest_ptes.iter().for_each(|&pte| {
-        // PR #21 (fix-bug/invalid-pte-synchronization): software may retain metadata
-        // in an invalid PTE, so only V=1 keeps the page protected as a page table.
-        if pte.is_valid() { drop = false; }
-    });
-    if drop {
+fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, valid_pte_count: usize) {
+    if valid_pte_count == 0 {
         // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
         // 将影子页表设置为可读可写
         if let Some(spt_pte) = spt.find_pte(VirtPageNum::from(va >> 12)) {
@@ -206,14 +243,17 @@ fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
 }
 
 /// 收集所有页表的虚拟页号
-pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec<VirtPageNum> {
+fn collect_page_table_pages<P: PageTable>(
+    hart_id: usize,
+    satp: usize,
+) -> Vec<GuestPageTablePageState> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
 
     // 遍历所有页表项
     let mut queue = VecDeque::new();
     let mut buffer = Vec::new();
     // 非叶子所在的虚拟页号
-    let mut non_leaf_vpns = Vec::new();
+    let mut page_table_pages = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
     queue.push_back(vpn);
 
@@ -222,29 +262,35 @@ pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
-            // 收集所有非叶子节点 `vpn`，用于设置为只读
-            non_leaf_vpns.push(guest_page_table_vpn);
             // 获得 guest pte 的物理页号
             let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 页表项内容
             let guest_ptes = guest_page_table_ppn.get_pte_array();
+            let mut valid_pte_count = 0;
             for guest_pte in guest_ptes.iter(){
+                if guest_pte.is_valid() {
+                    valid_pte_count += 1;
+                }
                 if guest_pte.is_valid() && walk < 2 {
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
                 }else if guest_pte.is_valid() && walk == 2 {
                 }
             }
+            page_table_pages.push(GuestPageTablePageState {
+                vpn: guest_page_table_vpn,
+                valid_pte_count,
+            });
         }
         while !buffer.is_empty() {
             queue.push_back(buffer.pop().unwrap());
         }
     }
-    non_leaf_vpns
+    page_table_pages
     
 }
 
-pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> usize {
+fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> Vec<GuestPageTablePageState> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
 
     // 遍历所有页表项
@@ -252,14 +298,13 @@ pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> usiz
     let mut buffer = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
     queue.push_back(vpn);
-    let mut walked_page_table_pages = 0;
+    let mut page_table_pages = Vec::new();
 
     for walk in 0..3 {
         // 遍历三级页表
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
-            walked_page_table_pages += 1;
             // 收集所有非叶子节点 `vpn`，用于设置为只读
             let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 的物理页号
@@ -268,7 +313,11 @@ pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> usiz
             let guest_ptes = guest_page_table_ppn.get_pte_array();
             // 获得 host pte 页表项内容
             let host_ptes = host_page_table_ppn.get_pte_array();
+            let mut valid_pte_count = 0;
             for (index, guest_pte) in guest_ptes.iter().enumerate() {
+                if guest_pte.is_valid() {
+                    valid_pte_count += 1;
+                }
                 if guest_pte.is_valid() && walk < 2 {
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
@@ -280,16 +329,25 @@ pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> usiz
                     host_ptes[index] = host_pte;
                 }
             }
+            page_table_pages.push(GuestPageTablePageState {
+                vpn: guest_page_table_vpn,
+                valid_pte_count,
+            });
         }
         while !buffer.is_empty() {
             queue.push_back(buffer.pop().unwrap());
         }
     }
-    walked_page_table_pages
+    page_table_pages
 }
 
 /// 用于初始化影子页表同步所有页表项(仅在最开始时使用)
-pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, mode: PageTableRoot, guest_spt: Option<&mut P>) -> Option<(P, usize)> {
+fn initialize_shadow_page_table<P: PageTable>(
+    hart_id: usize,
+    satp: usize,
+    mode: PageTableRoot,
+    guest_spt: Option<&mut P>,
+) -> Option<(P, Vec<GuestPageTablePageState>)> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
     let host_root_pa = gpt2spt(guest_root_pa, hart_id);
     // 获取 `guest SPT`
@@ -303,7 +361,7 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
     let mut queue = VecDeque::new();
     let mut buffer = Vec::new();
     // 非叶子所在的虚拟页号
-    let mut non_leaf_vpns = Vec::new();
+    let mut page_table_pages = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
     queue.push_back(vpn);
     for walk in 0..3 {
@@ -311,8 +369,6 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
-            // 收集所有非叶子节点 `vpn`，用于设置为只读
-            non_leaf_vpns.push(guest_page_table_vpn);
             let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 的物理页号
             let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, hart_id) >> 12);
@@ -320,7 +376,11 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
             let guest_ptes = guest_page_table_ppn.get_pte_array();
             // 获得 host pte 页表项内容
             let host_ptes = host_page_table_ppn.get_pte_array();
+            let mut valid_pte_count = 0;
             for (index, guest_pte) in guest_ptes.iter().enumerate() {
+                if guest_pte.is_valid() {
+                    valid_pte_count += 1;
+                }
                 if guest_pte.is_valid() && walk < 2 {
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
@@ -339,25 +399,28 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
                     host_ptes[index] = host_pte;
                 }
             }
+            page_table_pages.push(GuestPageTablePageState {
+                vpn: guest_page_table_vpn,
+                valid_pte_count,
+            });
         }
         while !buffer.is_empty() {
             queue.push_back(buffer.pop().unwrap());
         }
     }
     let mut host_shadow_page_table = PageTable::from_ppn(PhysPageNum::from(host_root_pa >> 12));
-    non_leaf_vpns.iter().for_each(|&vpn| {
+    page_table_pages.iter().for_each(|page| {
         match mode {
             PageTableRoot::GVA => {
-                update_pte_readonly(vpn, &mut host_shadow_page_table);
+                update_pte_readonly(page.vpn, &mut host_shadow_page_table);
             },
             PageTableRoot::UVA => {
-                update_pte_readonly(vpn, guest_spt);
+                update_pte_readonly(page.vpn, guest_spt);
             },
             _ => unreachable!()
         }
     });
-    let walked_page_table_pages = non_leaf_vpns.len();
-    Some((host_shadow_page_table, walked_page_table_pages))
+    Some((host_shadow_page_table, page_table_pages))
 }
 
 
@@ -438,8 +501,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 PageTableRoot::GVA => {
                     let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
                     spt = initialized.0;
-                    walked_page_table_pages += initialized.1;
+                    walked_page_table_pages += initialized.1.len();
                     full_walks += 1;
+                    self.shadow_state.shadow_page_tables.record_page_table_pages(&initialized.1);
                     self.shadow_state.shadow_page_tables.guest_satp = Some(satp);
 
                     assert!(!spt.translate(VirtPageNum::from(0x10001)).unwrap().is_valid());
@@ -449,8 +513,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();   
                     let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, Some(guest_spt)).unwrap();
                     spt = initialized.0;
-                    walked_page_table_pages += initialized.1;
+                    walked_page_table_pages += initialized.1.len();
                     full_walks += 1;
+                    self.shadow_state.shadow_page_tables.record_page_table_pages(&initialized.1);
                     
                 }
                 _ => unreachable!()
@@ -480,12 +545,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                         // PR #25 (`feature/cache-shadow-page-table-state`) only
                         // revisits cached pages after a guest PTE was written.
                         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-                        let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                        walked_page_table_pages += page_table_vpns.len();
+                        let page_table_pages = collect_page_table_pages::<P>(hart_id, satp);
+                        walked_page_table_pages += page_table_pages.len();
                         full_walks += 1;
-                        page_table_vpns.iter().for_each(|&vpn| {
-                            update_pte_readonly(vpn, guest_spt);
+                        page_table_pages.iter().for_each(|page| {
+                            update_pte_readonly(page.vpn, guest_spt);
                         });
+                        self.shadow_state.shadow_page_tables.record_page_table_pages(&page_table_pages);
                         self.shadow_state.shadow_page_tables.mark_synchronized(satp);
                     }
                 },
@@ -493,15 +559,18 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     update = ShadowPageTableUpdate::CachedUser;
                     if requires_resynchronization {
                         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-                        let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                        walked_page_table_pages += page_table_vpns.len();
+                        let page_table_pages = collect_page_table_pages::<P>(hart_id, satp);
+                        walked_page_table_pages += page_table_pages.len();
                         full_walks += 1;
-                        page_table_vpns.iter().for_each(|&vpn| {
-                            update_pte_readonly(vpn, guest_spt);
+                        page_table_pages.iter().for_each(|page| {
+                            update_pte_readonly(page.vpn, guest_spt);
                         });
+                        self.shadow_state.shadow_page_tables.record_page_table_pages(&page_table_pages);
                         // 需要更新用户态页表
-                        walked_page_table_pages += synchronize_page_table::<P>(hart_id, satp);
+                        let synchronized_pages = synchronize_page_table::<P>(hart_id, satp);
+                        walked_page_table_pages += synchronized_pages.len();
                         full_walks += 1;
+                        self.shadow_state.shadow_page_tables.record_page_table_pages(&synchronized_pages);
                         let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
                         let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
                         // 为 `SPT` 映射跳板页
@@ -551,25 +620,40 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
 
 
-    pub fn synchronize_page_table(&mut self, va: usize, pte: PageTableEntry) {
+    pub fn synchronize_page_table(
+        &mut self,
+        va: usize,
+        old_pte: PageTableEntry,
+        pte: PageTableEntry,
+    ) {
         let hart_id = self.guest_id;
         // 获取对应影子页表的地址
         let host_pa = gpt2spt(va, hart_id);
         let host_ppn = PhysPageNum::from(host_pa >> 12);
-        // 获得影子页表
-        let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-        let invalidation_scan;
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
-        }else if va % core::mem::size_of::<PageTableEntry>() == 0 && !pte.is_valid() {
-            invalidation_scan = true;
+        }
+        let page_vpn = VirtPageNum::from(va >> 12);
+        let (valid_pte_count, fallback_scan) = self
+            .shadow_state
+            .shadow_page_tables
+            .update_valid_pte_count(page_vpn, old_pte, pte, || {
+                let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
+                guest_ppn
+                    .get_pte_array()
+                    .iter()
+                    .filter(|pte| pte.is_valid())
+                    .count()
+            });
+        // 获得影子页表
+        let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
+        if !pte.is_valid() {
             // PR #21 (fix-bug/invalid-pte-synchronization): mirror every V=0 encoding,
             // including allocator metadata, and release pages with no valid PTEs.
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
             // 消除页表映射，将页表内存修改为可读可写
-            clear_page_table(guest_spt, va, hart_id);
+            clear_page_table(guest_spt, va, valid_pte_count);
         }else {
-            invalidation_scan = false;
             // 如果页表项对齐且物理页号不为零表示进行页表映射
             let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
             let pte_array = host_ppn.get_pte_array();
@@ -612,8 +696,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         // cached root conservatively; each root resynchronizes at most once per write.
         self.shadow_state.shadow_page_tables.record_pte_write();
         // PR #24 (`feature/shadow-paging-profile`) distinguishes incremental
-        // updates from the 512-entry scan performed when a PTE is invalidated.
-        self.shadow_state.shadow_paging_stats.record_pte_update(invalidation_scan);
+        // updates from a fallback scan when a page did not have initialized state.
+        self.shadow_state.shadow_paging_stats.record_pte_update(fallback_scan);
     }
 
 }

@@ -60,9 +60,14 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
             print_guest_backtrace(guest.shadow_state.shadow_page_tables.guest_page_table().unwrap(), guest.shadow_state.csrs.satp, ctx);
             panic!("guest va -> {:#x}, guest_pte_addr: {:#x}, sepc: {:#x}, translation: {:#x}", guest_va, guest_pte_addr, ctx.sepc, translation);
         }
+        // PR #27 (`feature/track-valid-pte-count`) supplies both V-bit states so
+        // the per-page count can be updated without scanning all 512 PTEs.
+        let old_pte = PageTableEntry {
+            bits: unsafe { core::ptr::read(guest_pte_addr as *const usize) },
+        };
         unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
 
-        guest.synchronize_page_table(guest_va, pte);
+        guest.synchronize_page_table(guest_va, old_pte, pte);
         ctx.sepc += len;
         return true;
     }
