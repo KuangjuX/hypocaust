@@ -245,6 +245,9 @@ pub fn initialize_vmm(meta: MachineMeta) {
     // PR #54 validates BASE probing and TIME action decoding before Linux can
     // depend on the modern Guest SBI contract.
     crate::guest::sbi_self_test();
+    // PR #58 checks Sv39 superpage classification before constructing any
+    // Linux shadow page table.
+    crate::guest::superpage_self_test();
     crate::page_table::translation_self_test();
     crate::device_emu::passthrough_self_test();
     crate::device_emu::console_self_test();

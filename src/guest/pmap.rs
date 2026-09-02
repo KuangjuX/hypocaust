@@ -45,6 +45,17 @@ struct GuestPageTablePageState {
     valid_pte_count: usize,
 }
 
+/// One valid Guest leaf found above Sv39's 4 KiB level.
+/// PR #58 (`feature/sv39-superpage-shadowing`) expands it because a VM's Host
+/// RAM slot is not guaranteed to preserve the Guest's superpage alignment.
+#[derive(Copy, Clone)]
+struct GuestSuperpageLeaf {
+    base_vpn: usize,
+    base_gpa: usize,
+    page_count: usize,
+    flags: PTEFlags,
+}
+
 pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// all shadow page tables (satp, spt)
     spts: UnsafeCell<BTreeMap<usize, CachedShadowPageTable<P>>>,
@@ -244,6 +255,72 @@ fn shadow_leaf_pte(
     }
 }
 
+fn is_leaf(pte: PageTableEntry) -> bool {
+    pte.readable() || pte.executable()
+}
+
+fn superpage_leaf(pte: PageTableEntry, walk: usize, base_vpn: usize) -> Option<GuestSuperpageLeaf> {
+    if !pte.is_valid() || !is_leaf(pte) || (pte.writable() && !pte.readable()) || walk >= 2 {
+        return None;
+    }
+    let page_count = 1usize << ((2 - walk) * 9);
+    let base_gpa = pte.ppn().0 << 12;
+    if base_gpa & (page_count * PAGE_SIZE - 1) != 0 {
+        return None;
+    }
+    Some(GuestSuperpageLeaf {
+        base_vpn,
+        base_gpa,
+        page_count,
+        flags: pte.flags(),
+    })
+}
+
+fn install_superpage_leaves<P: PageTable>(
+    spt: &mut P,
+    guest_memory: &GuestMemory,
+    leaves: &[GuestSuperpageLeaf],
+) {
+    for leaf in leaves {
+        for page in 0..leaf.page_count {
+            let gpa = leaf.base_gpa + page * PAGE_SIZE;
+            let Some(hpa) = guest_memory.translate_range(gpa, PAGE_SIZE) else {
+                continue;
+            };
+            let vpn = VirtPageNum::from(leaf.base_vpn + page);
+            let ppn = PhysPageNum::from(hpa >> 12);
+            let flags = leaf.flags | PTEFlags::U | PTEFlags::V;
+            if let Some(pte) = spt.find_pte(vpn) {
+                *pte = PageTableEntry::new(ppn, flags);
+            } else {
+                spt.map(vpn, ppn, flags);
+            }
+        }
+    }
+}
+
+/// PR #58 validates Sv39 leaf classification, size, and alignment without
+/// allocating the hundreds of 4 KiB leaves used by a real 1 GiB mapping.
+pub(crate) fn superpage_self_test() {
+    let aligned = PageTableEntry::new(
+        PhysPageNum::from(GUEST_KERNEL_VIRT_START >> 12),
+        PTEFlags::V | PTEFlags::R | PTEFlags::X,
+    );
+    assert_eq!(
+        superpage_leaf(aligned, 0, 0).map(|leaf| leaf.page_count),
+        Some(1 << 18),
+    );
+    assert_eq!(
+        superpage_leaf(aligned, 1, 0).map(|leaf| leaf.page_count),
+        Some(1 << 9),
+    );
+    let misaligned = PageTableEntry::new(
+        PhysPageNum::from((GUEST_KERNEL_VIRT_START >> 12) + 1),
+        PTEFlags::V | PTEFlags::R,
+    );
+    assert!(superpage_leaf(misaligned, 1, 0).is_none());
+}
+
 
 
 fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
@@ -298,7 +375,7 @@ fn collect_page_table_pages<P: PageTable>(
                 if guest_pte.is_valid() {
                     valid_pte_count += 1;
                 }
-                if guest_pte.is_valid() && walk < 2 {
+                if guest_pte.is_valid() && walk < 2 && !is_leaf(*guest_pte) {
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
                 }else if guest_pte.is_valid() && walk == 2 {
@@ -326,15 +403,16 @@ fn synchronize_page_table<P: PageTable>(
     // 遍历所有页表项
     let mut queue = VecDeque::new();
     let mut buffer = Vec::new();
+    let mut superpages = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
-    queue.push_back(vpn);
+    queue.push_back((vpn, 0usize));
     let mut page_table_pages = Vec::new();
 
     for walk in 0..3 {
         // 遍历三级页表
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
-            let guest_page_table_vpn = queue.pop_front().unwrap();
+            let (guest_page_table_vpn, virtual_prefix) = queue.pop_front().unwrap();
             // 收集所有非叶子节点 `vpn`，用于设置为只读
             let host_page_table_ppn = PhysPageNum::from(
                 checked_gpa_to_shadow_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
@@ -349,12 +427,13 @@ fn synchronize_page_table<P: PageTable>(
             let host_ptes = host_page_table_ppn.get_pte_array();
             let mut valid_pte_count = 0;
             for (index, guest_pte) in guest_ptes.iter().enumerate() {
+                let entry_vpn = virtual_prefix | (index << ((2 - walk) * 9));
                 if guest_pte.is_valid() {
                     valid_pte_count += 1;
                 }
-                if guest_pte.is_valid() && walk < 2 {
+                if guest_pte.is_valid() && walk < 2 && !is_leaf(*guest_pte) {
                     // 非叶子页表项
-                    buffer.push(VirtPageNum::from(guest_pte.ppn().0));
+                    buffer.push((VirtPageNum::from(guest_pte.ppn().0), entry_vpn));
                     // 构造 host pte
                     let host_pte = PageTableEntry::new(
                         PhysPageNum::from(checked_gpa_to_shadow_hpa(
@@ -363,7 +442,9 @@ fn synchronize_page_table<P: PageTable>(
                         guest_pte.flags(),
                     );
                     host_ptes[index] = host_pte;
-                }else if guest_pte.is_valid() && walk == 2 {
+                } else if let Some(leaf) = superpage_leaf(*guest_pte, walk, entry_vpn) {
+                    superpages.push(leaf);
+                } else if guest_pte.is_valid() && walk == 2 {
                     host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
             }
@@ -376,6 +457,9 @@ fn synchronize_page_table<P: PageTable>(
             queue.push_back(buffer.pop().unwrap());
         }
     }
+    let host_root_pa = checked_gpa_to_shadow_hpa(guest_memory, guest_root_pa, PAGE_SIZE);
+    let mut host_shadow_page_table = P::from_ppn(PhysPageNum::from(host_root_pa >> 12));
+    install_superpage_leaves(&mut host_shadow_page_table, guest_memory, &superpages);
     page_table_pages
 }
 
@@ -398,15 +482,16 @@ fn initialize_shadow_page_table<P: PageTable>(
     // 遍历所有页表项
     let mut queue = VecDeque::new();
     let mut buffer = Vec::new();
+    let mut superpages = Vec::new();
     // 非叶子所在的虚拟页号
     let mut page_table_pages = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
-    queue.push_back(vpn);
+    queue.push_back((vpn, 0usize));
     for walk in 0..3 {
         // 遍历三级页表
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
-            let guest_page_table_vpn = queue.pop_front().unwrap();
+            let (guest_page_table_vpn, virtual_prefix) = queue.pop_front().unwrap();
             let host_page_table_ppn = PhysPageNum::from(
                 checked_gpa_to_shadow_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
             );
@@ -420,12 +505,13 @@ fn initialize_shadow_page_table<P: PageTable>(
             let host_ptes = host_page_table_ppn.get_pte_array();
             let mut valid_pte_count = 0;
             for (index, guest_pte) in guest_ptes.iter().enumerate() {
+                let entry_vpn = virtual_prefix | (index << ((2 - walk) * 9));
                 if guest_pte.is_valid() {
                     valid_pte_count += 1;
                 }
-                if guest_pte.is_valid() && walk < 2 {
+                if guest_pte.is_valid() && walk < 2 && !is_leaf(*guest_pte) {
                     // 非叶子页表项
-                    buffer.push(VirtPageNum::from(guest_pte.ppn().0));
+                    buffer.push((VirtPageNum::from(guest_pte.ppn().0), entry_vpn));
                     // 构造 host pte
                     let host_pte = PageTableEntry::new(
                         PhysPageNum::from(checked_gpa_to_shadow_hpa(
@@ -434,7 +520,11 @@ fn initialize_shadow_page_table<P: PageTable>(
                         guest_pte.flags(),
                     );
                     host_ptes[index] = host_pte;
-                }else if guest_pte.is_valid() && walk == 2 {
+                } else if let Some(leaf) = superpage_leaf(*guest_pte, walk, entry_vpn) {
+                    // PR #58 defers expansion until the mirrored hierarchy is
+                    // complete, so PageTable::map can allocate lower levels.
+                    superpages.push(leaf);
+                } else if guest_pte.is_valid() && walk == 2 {
                     host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
             }
@@ -448,6 +538,7 @@ fn initialize_shadow_page_table<P: PageTable>(
         }
     }
     let mut host_shadow_page_table = PageTable::from_ppn(PhysPageNum::from(host_root_pa >> 12));
+    install_superpage_leaves(&mut host_shadow_page_table, guest_memory, &superpages);
     page_table_pages.iter().for_each(|page| {
         match mode {
             PageTableRoot::GVA => {
