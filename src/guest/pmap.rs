@@ -128,6 +128,13 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         });
     }
 
+    /// PR #48 (`fix-bug/guest-exception-forwarding`) identifies pages that
+    /// Hypocaust intentionally write-protected for incremental PTE tracking.
+    pub fn tracks_page_table_page(&self, gpa: usize) -> bool {
+        self.valid_pte_counts
+            .contains_key(&VirtPageNum::from(gpa >> 12))
+    }
+
     pub fn take_tlb_flush(&self, satp: usize) -> Option<usize> {
         let cached = self.spts().get_mut(&satp).unwrap();
         if cached.tlb_dirty {
@@ -688,6 +695,26 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                     .filter(|pte| pte.is_valid())
                     .count()
             });
+        if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
+            // PR #48 records a newly linked non-leaf page immediately. Its
+            // first trapped write can then be distinguished from an ordinary
+            // protection fault without relying on Guest-controlled alignment.
+            let child_gpa = pte.ppn().0 << 12;
+            if let Some(child_hpa) = guest_memory.translate_range(child_gpa, PAGE_SIZE) {
+                let child_ppn = PhysPageNum::from(child_hpa >> 12);
+                let child_state = GuestPageTablePageState {
+                    vpn: VirtPageNum::from(pte.ppn().0),
+                    valid_pte_count: child_ppn
+                        .get_pte_array()
+                        .iter()
+                        .filter(|entry| entry.is_valid())
+                        .count(),
+                };
+                self.shadow_state
+                    .shadow_page_tables
+                    .record_page_table_pages(&[child_state]);
+            }
+        }
         // 获得影子页表
         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
         if !pte.is_valid() {
@@ -709,30 +736,31 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         htracking!("Allocate page table, ppn: {:#x}", vpn.0);
                         update_pte_readonly(vpn, guest_spt);
                     }
-                }else{
-                    panic!()
                 }
 
             }else if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
                 // 非叶子节点
                 // 获取非叶子节点的偏移
-                let new_ppn = PhysPageNum::from(
-                    checked_gpa_to_shadow_hpa(
-                        guest_memory, pte.ppn().0 << 12, PAGE_SIZE
-                    ) >> 12
-                );
-                let new_flags = pte.flags();
-                let new_pte = PageTableEntry::new(new_ppn, new_flags);
-                pte_array[index] = new_pte;
-                // 判断当前页面是否设置为只读
-                let vpn = VirtPageNum::from(va >> 12);
-                if let Some(pte) = guest_spt.translate(vpn) {
-                    if pte.writable() | pte.executable() {
-                        htracking!("Allocate page table, ppn: {:#x}", vpn.0);
-                        update_pte_readonly(vpn, guest_spt);
+                if let Some(new_hpa) = guest_memory
+                    .translate_shadow_range(pte.ppn().0 << 12, PAGE_SIZE)
+                {
+                    let new_ppn = PhysPageNum::from(new_hpa >> 12);
+                    let new_flags = pte.flags();
+                    let new_pte = PageTableEntry::new(new_ppn, new_flags);
+                    pte_array[index] = new_pte;
+                    // 判断当前页面是否设置为只读
+                    let vpn = VirtPageNum::from(va >> 12);
+                    if let Some(pte) = guest_spt.translate(vpn) {
+                        if pte.writable() | pte.executable() {
+                            htracking!("Allocate page table, ppn: {:#x}", vpn.0);
+                            update_pte_readonly(vpn, guest_spt);
+                        }
                     }
                 }else{
-                    unreachable!()
+                    // PR #48 mirrors an out-of-RAM Guest non-leaf as invalid.
+                    // A later access becomes a Guest page fault instead of a
+                    // Host panic in checked shadow-memory translation.
+                    pte_array[index] = PageTableEntry::empty();
                 }
             }
         }

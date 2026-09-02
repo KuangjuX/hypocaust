@@ -1,8 +1,6 @@
 
 
 use riscv::addr::BitField;
-use riscv::register::scause;
-
 use super::TrapContext;
 use super::forward_exception;
 use crate::debug::PageDebug;
@@ -55,9 +53,11 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                 let mask = read_register(ctx, i.rs1() as usize);
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
-                let val = guest.get_csr(csr);
-                if mask != 0 {
-                    guest.set_csr(csr, val & !mask);
+                let Some(val) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
+                if mask != 0 && !write_guest_csr(guest, ctx, csr, val & !mask) {
+                    return;
                 }
                 write_register(ctx, rd, val);
             }
@@ -65,38 +65,56 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                 let mask = read_register(ctx, i.rs1() as usize);
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
-                let val = guest.get_csr(csr);
-                if mask != 0 {
-                    guest.set_csr(csr, val | mask);
+                let Some(val) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
+                if mask != 0 && !write_guest_csr(guest, ctx, csr, val | mask) {
+                    return;
                 }
                 write_register(ctx, rd, val);
             }
             // 写 CSR 指令
             riscv_decode::Instruction::Csrrw(i) => {
-                let prev = guest.get_csr(i.csr() as usize);
+                let csr = i.csr() as usize;
+                let Some(prev) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
                 // 向 Shadow CSR 写入
                 let val = read_register(ctx, i.rs1() as usize);
-                guest.set_csr(i.csr() as usize, val);
+                if !write_guest_csr(guest, ctx, csr, val) {
+                    return;
+                }
                 write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrwi(i) => {
-                let prev = guest.get_csr(i.csr() as usize);
-                guest.set_csr(i.csr() as usize, i.zimm() as usize);
+                let csr = i.csr() as usize;
+                let Some(prev) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
+                if !write_guest_csr(guest, ctx, csr, i.zimm() as usize) {
+                    return;
+                }
                 write_register(ctx, i.rd() as usize, prev);
             }
             riscv_decode::Instruction::Csrrsi(i) => {
-                let prev = guest.get_csr(i.csr() as usize);
+                let csr = i.csr() as usize;
+                let Some(prev) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
                 let mask = i.zimm() as usize;
-                if mask != 0 {
-                    guest.set_csr(i.csr() as usize, prev | mask);
+                if mask != 0 && !write_guest_csr(guest, ctx, csr, prev | mask) {
+                    return;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrci(i) => {
-                let prev = guest.get_csr(i.csr() as usize);
+                let csr = i.csr() as usize;
+                let Some(prev) = read_guest_csr(guest, ctx, csr) else {
+                    return;
+                };
                 let mask = i.zimm() as usize;
-                if mask != 0 {
-                    guest.set_csr(i.csr() as usize, prev & !mask);
+                if mask != 0 && !write_guest_csr(guest, ctx, csr, prev & !mask) {
+                    return;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             }
@@ -106,28 +124,38 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                 let return_to_smode = guest.shadow_state.csrs.sstatus
                     .get_bit(STATUS_SPP_BIT);
                 guest.shadow_state.pop_sie();
-                ctx.sepc = guest.get_csr(crate::constants::csr::sepc);
+                ctx.sepc = guest
+                    .get_csr(crate::constants::csr::sepc)
+                    .expect("virtual sepc CSR is unavailable");
                 guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
                 guest.smode = return_to_smode;
                 // hdebug!("sret: spec -> {:#x}", ctx.sepc);
                 return;
             }
             riscv_decode::Instruction::SfenceVma(i) => {
-                if i.rs1() == 0 {
-                    // unsafe{ core::arch::asm!("sfence.vma") };
-                }else{
-                    unimplemented!()
-                }
+                // PR #48 (`fix-bug/guest-exception-forwarding`) accepts both
+                // global and address-selective Guest fences. Trapped PTE
+                // writes already update shadow leaves; marking every cached
+                // ASID dirty conservatively supplies the required Host fence.
+                let _guest_address = read_register(ctx, i.rs1() as usize);
+                guest
+                    .shadow_state
+                    .shadow_page_tables
+                    .mark_all_tlb_dirty();
             }
             riscv_decode::Instruction::Wfi => {}
             _ => {
-                let paddr = guest.translate_guest_vaddr(ctx.sepc).unwrap();
-                let inst = unsafe{ core::ptr::read(paddr as *const u32) };
-                panic!("Unrecognized instruction, sepc: {:#x}, scause: {:?}, inst: {:#x}", ctx.sepc, scause::read().cause(), inst)
+                // PR #48 lets the Guest kernel decide how to handle a legal
+                // trap cause that Hypocaust does not virtualize.
+                forward_exception(guest, ctx);
+                return;
             }
         }
-    }else{ 
-        forward_exception(guest, ctx) 
+    }else{
+        // PR #48 must not advance from the newly installed Guest trap vector.
+        // The old code added `len` after forwarding and entered stvec+2/4.
+        forward_exception(guest, ctx);
+        return;
     }
     ctx.sepc += len;
 }
@@ -144,16 +172,49 @@ fn write_register(ctx: &mut TrapContext, register: usize, value: usize) {
     }
 }
 
+/// PR #48 converts unsupported CSR accesses back into the Guest-visible
+/// illegal-instruction exception that caused the emulation attempt.
+fn read_guest_csr<P: PageTable + PageDebug>(
+    guest: &mut Vcpu<P>,
+    ctx: &mut TrapContext,
+    csr: usize,
+) -> Option<usize> {
+    match guest.get_csr(csr) {
+        Some(value) => Some(value),
+        None => {
+            forward_exception(guest, ctx);
+            None
+        }
+    }
+}
+
+fn write_guest_csr<P: PageTable + PageDebug>(
+    guest: &mut Vcpu<P>,
+    ctx: &mut TrapContext,
+    csr: usize,
+    value: usize,
+) -> bool {
+    if guest.set_csr(csr, value) {
+        true
+    } else {
+        forward_exception(guest, ctx);
+        false
+    }
+}
+
 /// decode instruction from Guest OS address
 pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &Vcpu<P>, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
-    let paddr = guest.translate_guest_vaddr(addr).unwrap();
+    // PR #48 forwards an instruction access failure into the Guest instead of
+    // unwrapping a missing shadow translation and panicking the Host.
+    let Some(paddr) = guest.translate_guest_vaddr(addr) else {
+        return (0, None);
+    };
     let i1 = unsafe{ core::ptr::read(paddr as *const u16) };
     let len = riscv_decode::instruction_length(i1);
     let inst = match len {
         2 => i1 as u32,
         4 => unsafe{ core::ptr::read(paddr as *const u32) },
-        _ => unreachable!()
+        _ => return (len, None),
     };
     (len, riscv_decode::decode(inst).ok())
 }
-

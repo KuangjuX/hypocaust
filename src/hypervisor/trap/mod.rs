@@ -37,6 +37,51 @@ use self::forward::{forward_exception, maybe_forward_interrupt};
 
 global_asm!(include_str!("trap.S"));
 
+/// PR #48 (`fix-bug/guest-exception-forwarding`) separates synchronous Guest
+/// exceptions from physical Host interrupts. An unsupported Guest exception
+/// is architectural input for one vCPU, not a reason to panic the Hypervisor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrapRoute {
+    EmulateInstruction,
+    HandlePageFault,
+    ForwardGuestException,
+    Preempt,
+    HostSoftwareInterrupt,
+    FatalHostInterrupt,
+}
+
+fn route_trap(trap: Trap) -> TrapRoute {
+    match trap {
+        Trap::Exception(Exception::UserEnvCall | Exception::IllegalInstruction) => {
+            TrapRoute::EmulateInstruction
+        }
+        Trap::Exception(Exception::LoadPageFault | Exception::StorePageFault) => {
+            TrapRoute::HandlePageFault
+        }
+        Trap::Exception(_) => TrapRoute::ForwardGuestException,
+        Trap::Interrupt(Interrupt::SupervisorTimer) => TrapRoute::Preempt,
+        Trap::Interrupt(Interrupt::SupervisorSoft) => TrapRoute::HostSoftwareInterrupt,
+        Trap::Interrupt(_) => TrapRoute::FatalHostInterrupt,
+    }
+}
+
+/// PR #48 exercises the exception/interrupt isolation decision without
+/// requiring a Guest to deliberately crash during the QEMU boot regression.
+pub(crate) fn exception_routing_self_test() {
+    assert_eq!(
+        route_trap(Trap::Exception(Exception::Breakpoint)),
+        TrapRoute::ForwardGuestException,
+    );
+    assert_eq!(
+        route_trap(Trap::Exception(Exception::IllegalInstruction)),
+        TrapRoute::EmulateInstruction,
+    );
+    assert_eq!(
+        route_trap(Trap::Interrupt(Interrupt::SupervisorTimer)),
+        TrapRoute::Preempt,
+    );
+}
+
 
 
 /// initialize CSR `stvec` as the entry of `__alltraps`
@@ -93,41 +138,38 @@ pub fn trap_handler() -> ! {
     // PR #24 (`feature/shadow-paging-profile`) counts every transition from
     // the deprivileged guest into Hypocaust to correlate traps with paging work.
     guest.shadow_state.shadow_paging_stats.record_trap();
-    let preempt = match scause.cause() {
-        Trap::Exception(Exception::UserEnvCall) => {
+    let preempt = match route_trap(scause.cause()) {
+        TrapRoute::EmulateInstruction => {
             ifault(guest, ctx);
             false
         },
-        Trap::Exception(Exception::Breakpoint) => { 
-            ifault(guest, ctx);
-            false
-        }
         // PR #17 (fix-bug/virtio-dma-translation): VirtIO reads fault by
         // design and must enter the same MMIO emulator as register writes.
-        Trap::Exception(Exception::LoadPageFault) |
-        Trap::Exception(Exception::StorePageFault) => {
+        TrapRoute::HandlePageFault => {
             if !handle_page_fault(guest, device_bus, ctx) {
                 htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
                 forward_exception(guest, ctx);
             }
             false
         }
-        Trap::Exception(Exception::IllegalInstruction) => {
-            ifault(guest, ctx);
+        TrapRoute::ForwardGuestException => {
+            // PR #48 forwards breakpoints, access faults, misaligned accesses,
+            // and other synchronous exceptions only into the current vCPU.
+            forward_exception(guest, ctx);
             false
         }
-        Trap::Interrupt(Interrupt::SupervisorTimer) => {
+        TrapRoute::Preempt => {
             handle_time_interrupt(guest);
             poll_device_completions(guest, device_bus);
             true
         },
-        Trap::Interrupt(Interrupt::SupervisorSoft) => {
+        TrapRoute::HostSoftwareInterrupt => {
             // PR #40 uses this Host IPI to make the current vCPU re-arbitrate
             // its own virtual pending bits; it is not itself a Guest SSIP.
             unsafe { asm!("csrci sip, 2") };
             false
         },
-        _ => {  
+        TrapRoute::FatalHostInterrupt => {
             panic!(
                 "Unsupported trap {:?}, stval = {:#x} spec: {:#x} smode -> {}!",
                 scause.cause(),
