@@ -31,7 +31,7 @@ use riscv::register::{
 pub use context::TrapContext;
 use self::inst_fault::{ifault, decode_instruction_at_address};
 use self::page_fault::handle_page_fault;
-use self::device::{handle_device_mmio, handle_time_interrupt};
+use self::device::{handle_device_mmio, handle_time_interrupt, poll_device_completions};
 use self::forward::{forward_exception, maybe_forward_interrupt};
 
 
@@ -118,6 +118,7 @@ pub fn trap_handler() -> ! {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             handle_time_interrupt(guest);
+            poll_device_completions(guest, device_bus);
             true
         },
         Trap::Interrupt(Interrupt::SupervisorSoft) => {

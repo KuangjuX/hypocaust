@@ -17,12 +17,17 @@ const VIRTIO_MMIO_QUEUE_SEL: usize = 0x030;
 const VIRTIO_MMIO_QUEUE_NUM: usize = 0x038;
 const VIRTIO_MMIO_QUEUE_PFN: usize = 0x040;
 const VIRTIO_MMIO_QUEUE_NOTIFY: usize = 0x050;
+const VIRTIO_MMIO_INTERRUPT_ACK: usize = 0x064;
 const VIRTIO_MMIO_STATUS: usize = 0x070;
 
 const VRING_DESC_F_NEXT: u16 = 1;
 
 pub struct VirtIO {
     pub devices: ArrayVec<Device, MAX_DEVICES>,
+    /// PR #42 (`feature/async-virtio-block`) exposes backend progress for
+    /// runtime validation and later production telemetry.
+    notifications: usize,
+    completions: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -35,6 +40,9 @@ pub struct Queue {
     size: usize,
     /// Last available-ring index whose descriptors were translated.
     last_avail_idx: u16,
+    /// Last used-ring index observed by Hypocaust's asynchronous completion
+    /// poller. It is independent from the Guest driver's consumed index.
+    last_used_idx: u16,
 }
 
 #[derive(Copy, Clone)]
@@ -69,6 +77,7 @@ impl Device {
                 host_pa: 0,
                 size: 0,
                 last_avail_idx: 0,
+                last_used_idx: 0,
             }; MAX_QUEUES],
             device_registers: MemoryRegion::new(host_base_address, 0x1000)
         }
@@ -79,7 +88,11 @@ impl VirtIO {
     pub fn new(guest_base_address: usize, host_base_address: usize) -> Self {
         let mut devices = ArrayVec::new();
         devices.push(Device::new(guest_base_address, host_base_address));
-        Self { devices }
+        Self {
+            devices,
+            notifications: 0,
+            completions: 0,
+        }
     }
 
     pub fn read(&self, address: usize) -> u32 {
@@ -147,6 +160,7 @@ impl VirtIO {
                         assert!((value as usize) < queues.len(), "virtio queue notification out of range");
                         let queue = &mut queues[value as usize];
                         Self::translate_available(queue, guest_memory);
+                        self.notifications += 1;
                     },
                     VIRTIO_MMIO_STATUS if value == 0 => {
                         for queue in queues.iter_mut() {
@@ -154,6 +168,7 @@ impl VirtIO {
                             queue.host_pa = 0;
                             queue.size = 0;
                             queue.last_avail_idx = 0;
+                            queue.last_used_idx = 0;
                         }
                     },
                     _ => {},
@@ -165,6 +180,46 @@ impl VirtIO {
         }
     }
 
+    /// PR #42 observes completed requests without blocking the running vCPU.
+    /// QEMU advances the used ring after its checked DMA operation finishes.
+    pub fn poll_completions(&mut self) -> bool {
+        let mut completed = 0usize;
+        for device in self.devices.iter_mut() {
+            let Device::Passthrough { queues, .. } = device else {
+                continue;
+            };
+            for queue in queues.iter_mut() {
+                if queue.host_pa == 0 || queue.size == 0 {
+                    continue;
+                }
+                let Some(used) = Self::used_ring_address(queue) else {
+                    continue;
+                };
+                let used_idx = unsafe { read_volatile((used + 2) as *const u16) };
+                completed += used_idx.wrapping_sub(queue.last_used_idx) as usize;
+                queue.last_used_idx = used_idx;
+            }
+        }
+        self.completions += completed;
+        completed != 0
+    }
+
+    /// PR #42 identifies Guest acknowledgement of the block interrupt so the
+    /// VM-local PLIC source can be lowered after the backend register write.
+    pub fn is_interrupt_ack(&self, address: usize) -> bool {
+        self.devices.iter().any(|device| match device {
+            Device::Passthrough {
+                guest_base_address,
+                ..
+            } => address == *guest_base_address + VIRTIO_MMIO_INTERRUPT_ACK,
+            Device::Unmapped => false,
+        })
+    }
+
+    pub fn progress(&self) -> (usize, usize) {
+        (self.notifications, self.completions)
+    }
+
     fn queue_allocation_len(size: usize) -> Option<usize> {
         let descriptor_bytes = size.checked_mul(core::mem::size_of::<Descriptor>())?;
         let available_bytes = 6usize.checked_add(size.checked_mul(2)?)?;
@@ -172,6 +227,18 @@ impl VirtIO {
             .checked_add(available_bytes)?
             .checked_add(0xfff)? & !0xfff;
         used_offset.checked_add(6usize.checked_add(size.checked_mul(8)?)?)
+    }
+
+    fn used_ring_address(queue: &Queue) -> Option<usize> {
+        let descriptor_bytes = queue
+            .size
+            .checked_mul(core::mem::size_of::<Descriptor>())?;
+        let available_bytes = 6usize.checked_add(queue.size.checked_mul(2)?)?;
+        let used_offset = descriptor_bytes
+            .checked_add(available_bytes)?
+            .checked_add(0xfff)?
+            & !0xfff;
+        queue.host_pa.checked_add(used_offset)
     }
 
     fn translate_available(queue: &mut Queue, guest_memory: &GuestMemory) {
