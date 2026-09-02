@@ -21,7 +21,7 @@ The bus is the only component that decides whether a Guest address belongs to
 a device. It exposes checked 32-bit read and write operations and returns
 `None` or `false` for an unmapped address.
 
-Passthrough register regions record two addresses explicitly:
+Mediated register regions record two addresses explicitly:
 
 - the Guest physical base exposed in that VM's hardware description;
 - the Host physical MMIO base assigned to the backend.
@@ -30,11 +30,12 @@ The VirtIO and QEMU test-device paths translate the register offset between
 those spaces. Queue and descriptor DMA continues to use the VM-owned checked
 `GuestMemory` capability introduced by PR #36.
 
-The current QEMU setup has one physical VirtIO block device. Its default
-passthrough bus is therefore restricted to VM 0 so constructing another VM
+The original QEMU setup had one physical VirtIO block device. Its default
+mediated bus was therefore restricted to VM 0 so constructing another VM
 cannot silently grant two Guests the same physical device. The later emulated
-VirtIO PR will provide an independent backend for every VM; an IOMMU PR will
-define the separate opt-in path for exclusively assigned passthrough devices.
+VirtIO work provides an independent backend for every VM; PR #47
+(`feature/iommu-passthrough-policy`) defines the separate opt-in contract for
+exclusively assigned, IOMMU-protected passthrough devices.
 
 ## Real-hypervisor model
 
@@ -45,7 +46,7 @@ Guest MMIO fault
   -> current VcpuKey
   -> owning VirtualMachine
   -> that VM's DeviceBus
-  -> emulated backend, or exclusively assigned passthrough backend
+  -> mediated/emulated backend, or IOMMU-protected exclusive passthrough
   -> virtual interrupt targeted at one of that VM's vCPUs
 ```
 

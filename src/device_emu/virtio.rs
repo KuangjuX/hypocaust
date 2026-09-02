@@ -2,7 +2,11 @@
 //!
 //! PR #17 (fix-bug/virtio-dma-translation): intercept legacy VirtIO MMIO queue
 //! setup and notifications, translating guest queue/descriptor addresses to
-//! host physical addresses before the passthrough QEMU device performs DMA.
+//! host physical addresses before the QEMU backend performs DMA.
+//!
+//! PR #47 (`feature/iommu-passthrough-policy`) names this path `Mediated`:
+//! Hypocaust owns the Guest-visible register and DMA contract, so it is not
+//! unrestricted hardware passthrough.
 
 use arrayvec::ArrayVec;
 use core::ptr::{read_volatile, write_volatile};
@@ -55,7 +59,7 @@ struct Descriptor {
 }
 
 pub enum Device {
-    Passthrough {
+    Mediated {
         /// PR #39 keeps the Guest-visible register base separate from the Host
         /// physical MMIO aperture assigned to this VM.
         guest_base_address: usize,
@@ -69,7 +73,7 @@ pub enum Device {
 
 impl Device {
     pub fn new(guest_base_address: usize, host_base_address: usize) -> Self {
-        Device::Passthrough { 
+        Device::Mediated {
             guest_base_address,
             queue_sel: 0,
             queues: [Queue {
@@ -99,7 +103,7 @@ impl VirtIO {
         let device = self.devices.iter().find(|device| device.contains(address))
             .expect("virtio read outside registered device");
         match device {
-            Device::Passthrough {
+            Device::Mediated {
                 guest_base_address,
                 queue_sel,
                 queues,
@@ -121,7 +125,7 @@ impl VirtIO {
         let device = self.devices.iter_mut().find(|device| device.contains(address))
             .expect("virtio write outside registered device");
         match device {
-            Device::Passthrough {
+            Device::Mediated {
                 guest_base_address,
                 queue_sel,
                 queues,
@@ -185,7 +189,7 @@ impl VirtIO {
     pub fn poll_completions(&mut self) -> bool {
         let mut completed = 0usize;
         for device in self.devices.iter_mut() {
-            let Device::Passthrough { queues, .. } = device else {
+            let Device::Mediated { queues, .. } = device else {
                 continue;
             };
             for queue in queues.iter_mut() {
@@ -208,7 +212,7 @@ impl VirtIO {
     /// VM-local PLIC source can be lowered after the backend register write.
     pub fn is_interrupt_ack(&self, address: usize) -> bool {
         self.devices.iter().any(|device| match device {
-            Device::Passthrough {
+            Device::Mediated {
                 guest_base_address,
                 ..
             } => address == *guest_base_address + VIRTIO_MMIO_INTERRUPT_ACK,
@@ -283,7 +287,7 @@ impl VirtIO {
 impl Device {
     fn contains(&self, address: usize) -> bool {
         match self {
-            Device::Passthrough {
+            Device::Mediated {
                 guest_base_address,
                 device_registers,
                 ..

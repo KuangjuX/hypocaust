@@ -1,5 +1,6 @@
 mod uart;
 mod plic;
+mod passthrough;
 mod virtio;
 use alloc::sync::Arc;
 
@@ -10,6 +11,15 @@ pub use uart::Uart;
 #[allow(unused_imports)]
 pub use plic::VirtualPlic;
 pub use plic::{PLIC_GPA, PLIC_SIZE, VIRTIO_BLOCK_IRQ};
+// PR #47 exposes the board-adapter contract before the QEMU board grows an
+// IOMMU implementation; the mediated example intentionally does not use it.
+#[allow(unused_imports)]
+pub use passthrough::{
+    DmaAperture, InterruptRemap, IommuDomainId, IommuPassthroughAdapter,
+    PassthroughAssignment, PassthroughConfigError, PassthroughError,
+    PassthroughManager, PhysicalDeviceId,
+};
+pub(crate) use passthrough::self_test as passthrough_self_test;
 pub use virtio::VirtIO;
 
 const QEMU_TEST_GPA: usize = 0x0010_0000;

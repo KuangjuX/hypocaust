@@ -42,7 +42,10 @@ QEMU attaches them as different block devices, so queue state, used rings,
 interrupt state, and filesystem writes are not shared between VMs.
 
 This remains mediated assignment: Hypocaust traps MMIO and validates DMA while
-QEMU executes block requests. It is not unrestricted physical passthrough.
+QEMU executes block requests. PR #47 (`feature/iommu-passthrough-policy`)
+reserves the term passthrough for an exclusively owned device protected by a
+platform IOMMU domain and interrupt remapping; QEMU does not silently enter
+that mode.
 
 ## Run
 

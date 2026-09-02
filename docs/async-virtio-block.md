@@ -1,8 +1,9 @@
 # Asynchronous mediated VirtIO block backend
 
-PR #42 (`feature/async-virtio-block`) converts the QEMU VirtIO block path from
-fire-and-forget passthrough into a completion-tracked, VM-owned mediated
-backend.
+PR #42 (`feature/async-virtio-block`) converts the former fire-and-forget QEMU
+VirtIO path into a completion-tracked, VM-owned mediated backend. PR #47
+(`feature/iommu-passthrough-policy`) makes this terminology an enforced
+architectural boundary rather than treating direct Host MMIO as passthrough.
 
 ## Backend boundary
 
@@ -77,7 +78,7 @@ xv6-rust must still complete file-system initialization.
 ## Production evolution
 
 This mediated backend prevents unchecked DMA and virtualizes completion
-routing, but it remains assigned to one physical QEMU device. Multi-Guest
-configuration will give each VM an independent disk backend. The later IOMMU
-adapter will retain this path only for explicitly exclusive passthrough;
-general-purpose Guests should use a fully emulated or paravirtual backend.
+routing. PR #45 gives each VM an independent QEMU disk backend. PR #47 defines
+the separate hardware passthrough manager; general-purpose Guests should keep
+using a fully emulated, mediated, or paravirtual backend unless a board adapter
+can provide exclusive IOMMU and interrupt-remapping protection.
