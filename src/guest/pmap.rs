@@ -397,6 +397,7 @@ fn collect_page_table_pages<P: PageTable>(
 fn synchronize_page_table<P: PageTable>(
     guest_memory: &GuestMemory,
     satp: usize,
+    shadow_page_table: &mut P,
 ) -> Vec<GuestPageTablePageState> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
 
@@ -457,9 +458,12 @@ fn synchronize_page_table<P: PageTable>(
             queue.push_back(buffer.pop().unwrap());
         }
     }
-    let host_root_pa = checked_gpa_to_shadow_hpa(guest_memory, guest_root_pa, PAGE_SIZE);
-    let mut host_shadow_page_table = P::from_ppn(PhysPageNum::from(host_root_pa >> 12));
-    install_superpage_leaves(&mut host_shadow_page_table, guest_memory, &superpages);
+    // PR #59 (`fix-bug/superpage-resync-frame-ownership`) installs expanded
+    // leaves through the cached PageTable owner. Any lower-level frames
+    // allocated by PageTable::map therefore live as long as the cached root;
+    // a temporary from_ppn wrapper would free them on return and leave dangling
+    // PTEs in the Guest's active shadow tree.
+    install_superpage_leaves(shadow_page_table, guest_memory, &superpages);
     page_table_pages
 }
 
@@ -701,11 +705,15 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         });
                         self.shadow_state.shadow_page_tables.record_page_table_pages(&page_table_pages);
                         // 需要更新用户态页表
-                        let synchronized_pages = synchronize_page_table::<P>(guest_memory, satp);
+                        let spt = self
+                            .shadow_state
+                            .shadow_page_tables
+                            .shadow_page_table(satp)
+                            .unwrap();
+                        let synchronized_pages =
+                            synchronize_page_table::<P>(guest_memory, satp, spt);
                         walked_page_table_pages += synchronized_pages.len();
                         full_walks += 1;
-                        self.shadow_state.shadow_page_tables.record_page_table_pages(&synchronized_pages);
-                        let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
                         let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
                         // 为 `SPT` 映射跳板页
                         let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
@@ -730,6 +738,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                             htracking!("user remap trap context");
                             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
                         }
+                        self.shadow_state
+                            .shadow_page_tables
+                            .record_page_table_pages(&synchronized_pages);
                         self.shadow_state.shadow_page_tables.mark_synchronized(satp);
                     }
                     let shadow_satp = self.shadow_state.shadow_page_tables.shadow_token(satp).unwrap();
