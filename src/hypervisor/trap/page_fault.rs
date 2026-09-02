@@ -36,7 +36,7 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     let (len, inst) = decode_instruction_at_address(guest, sepc);
     let mut pte = 0;
     if let Some(translation) = guest.translate_guest_vaddr(guest_va) {
-        // PR fix-bug/guest-pte-write-translation: use the guest page-table walk's
+        // PR #19 (fix-bug/guest-pte-write-translation): use the guest page-table walk's
         // host address because kernel virtual PTE aliases are not linear GPAs.
         if let Some(inst) = inst {
             match inst {
