@@ -64,9 +64,9 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
             _ => panic!("stval: {:#x}", ctx.sepc)
         }
     }
-    // PR #42 mirrors this VM's PLIC context output into only the vCPU that
-    // executed the controller/device access. Claim or ACK can deassert SEIP.
-    if device_bus.has_irq(guest.id.index()) {
+    // PR #43 selects the VM-local PLIC context rather than the globally unique
+    // vCPU ID. Claim or VirtIO ACK can then deassert this vCPU's SEIP.
+    if device_bus.has_irq(guest.guest_hart_id.index()) {
         guest.inject_virtual_interrupt(VirtualInterrupt::External);
     } else {
         guest.clear_virtual_interrupt(VirtualInterrupt::External);
@@ -92,13 +92,13 @@ pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>) {
     set_timer(next);
 }
 
-/// PR #42 turns asynchronous backend completion into a VM-local PLIC source
-/// and synchronizes that context output with the current vCPU's virtual SEIP.
+/// PR #43 turns asynchronous backend completion into the current vCPU's
+/// VM-local PLIC context rather than indexing it by a global scheduler ID.
 pub fn poll_device_completions<P: PageTable + PageDebug>(
     guest: &mut Vcpu<P>,
     device_bus: &mut DeviceBus,
 ) {
-    if device_bus.poll_async(guest.id.index()) {
+    if device_bus.poll_async(guest.guest_hart_id.index()) {
         guest.inject_virtual_interrupt(VirtualInterrupt::External);
     }
 }

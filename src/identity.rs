@@ -31,6 +31,22 @@ impl VcpuId {
     }
 }
 
+/// PR #43 (`feature/vm-runtime-config`) identifies a hart inside one Guest.
+/// Unlike [`VcpuId`], this value is local to a VM and selects architectural
+/// interfaces such as the Guest boot `a0` value and virtual PLIC context.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct GuestHartId(usize);
+
+impl GuestHartId {
+    pub const fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    pub const fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// PR #38 (`feature/multivcpu-scheduler`) names a schedulable vCPU without
 /// conflating its VM ownership with the Host hart currently running it.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

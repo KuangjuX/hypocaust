@@ -37,9 +37,9 @@ mod hypervisor;
 
 
 use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
-use crate::guest::VirtualMachine;
+use crate::guest::{VirtualMachine, VmConfig};
 use crate::hypervisor::{HYPOCAUST, HYPERVISOR_MEMORY};
-use crate::identity::{HartId, VcpuId, VmId};
+use crate::identity::{GuestHartId, HartId, VcpuId};
 use crate::mm::MemorySet;
 
 // use fdt::Fdt;
@@ -118,9 +118,10 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         {
             let mut hypervisor = HYPOCAUST.lock();
             let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-            let vm_id = VmId::new(0);
             let vcpu_id = VcpuId::new(0);
-            let mut vm = VirtualMachine::new(vm_id);
+            // PR #43 (`feature/vm-runtime-config`) makes the QEMU device
+            // assignment visible at the VM construction boundary.
+            let mut vm = VirtualMachine::new(VmConfig::qemu_default());
             // PR #36 (`feature/vm-guest-memory`) creates the VM-owned RAM slot
             // before loading the Guest so every mapping uses the same capability.
             let guest_kernel_memory =
@@ -135,7 +136,11 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
             // 创建用户态的 guest kernel 内存空间
             let user_guest_kernel_memory =
                 MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-            vm.add_vcpu(user_guest_kernel_memory, vcpu_id);
+            vm.add_vcpu(
+                user_guest_kernel_memory,
+                vcpu_id,
+                GuestHartId::new(0),
+            );
             hypervisor.add_vm(vm);
         }
         // PR #38 (`feature/multivcpu-scheduler`) starts secondary Host harts
