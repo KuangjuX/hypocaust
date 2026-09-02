@@ -27,7 +27,9 @@ The cycle totals intentionally exclude serial reporting. Compare measurements
 using the same QEMU configuration and build profile; debug and release cycle
 counts are not directly comparable.
 
-On the xv6-rust boot baseline, the first kernel shadow page table traversed 204
-page-table pages (104,448 PTEs). This confirms that complete page-table walks
-are large enough to measure separately before changing the synchronization
-algorithm.
+On the xv6-rust debug/QEMU boot baseline, the first kernel shadow page table
+traversed 204 page-table pages (104,448 PTEs). After 128 `satp` updates, only 5
+updates had created a new shadow table; 63 cached kernel switches and 60 cached
+user switches had nevertheless caused 188 full walks over 13,676 page-table
+pages (7,002,112 PTEs). This confirms that repeated walks on cached switches
+are the first shadow-paging cost to remove.
