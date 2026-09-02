@@ -119,7 +119,7 @@ fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
     let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
     let guest_ptes = guest_ppn.get_pte_array();
     guest_ptes.iter().for_each(|&pte| {
-        // PR fix-bug/invalid-pte-synchronization: software may retain metadata
+        // PR #21 (fix-bug/invalid-pte-synchronization): software may retain metadata
         // in an invalid PTE, so only V=1 keeps the page protected as a page table.
         if pte.is_valid() { drop = false; }
     });
@@ -443,7 +443,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
         }else if va % core::mem::size_of::<PageTableEntry>() == 0 && !pte.is_valid() {
-            // PR fix-bug/invalid-pte-synchronization: mirror every V=0 encoding,
+            // PR #21 (fix-bug/invalid-pte-synchronization): mirror every V=0 encoding,
             // including allocator metadata, and release pages with no valid PTEs.
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
             // 消除页表映射，将页表内存修改为可读可写
