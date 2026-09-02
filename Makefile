@@ -1,59 +1,77 @@
-TARGET		:= riscv64gc-unknown-none-elf
-MODE		:= debug
-KERNEL_ELF	:= target/$(TARGET)/$(MODE)/hypocaust
-KERNEL_BIN	:= target/$(TARGET)/$(MODE)/hypocaust.bin
-CPUS		:= 1
+TARGET := riscv64gc-unknown-none-elf
+MODE := debug
+KERNEL_ELF := target/$(TARGET)/$(MODE)/hypocaust
+KERNEL_BIN := target/$(TARGET)/$(MODE)/hypocaust.bin
 
-BOARD 		:= qemu
+GDB ?= gdb-multiarch
+QEMU ?= qemu-system-riscv64
+OBJDUMP ?= rust-objdump --arch-name=riscv64
+OBJCOPY ?= rust-objcopy --binary-architecture=riscv64
 
-GDB			:= gdb-multiarch
+FS_IMG := fs.img
+GUEST_KERNEL_ELF := guest_kernel
+GUEST_KERNEL_FEATURE := --features embed_guest_kernel
 
-FS_IMG 		:= fs.img
+# feature/xv6-rust-production-readme treats xv6-rust as an independent guest
+# project. Override this path when it is not checked out beside Hypocaust.
+XV6_RUST_DIR ?= ../xv6-rust
+XV6_RUST_KERNEL_ELF := $(XV6_RUST_DIR)/kernel/target/$(TARGET)/$(MODE)/kernel
+XV6_RUST_FS_IMG := $(XV6_RUST_DIR)/fs.img
 
-# 客户操作系统
-GUEST_KERNEL_ELF	:= ./guest_kernel
-# GUEST_KERNEL_BIN	:= minikernel/target/$(TARGET)/$(MODE)/minikernel.bin
+# QEMU's bundled OpenSBI loads Hypocaust at its linked 0x80200000 entry point.
+QEMUOPTS := -machine virt -m 3G -bios default -kernel $(KERNEL_ELF) -nographic
+QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
+QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
-GUEST_KERNEL_FEATURE:=$(if $(GUEST_KERNEL_ELF), --features embed_guest_kernel, )
+.PHONY: help build xv6-rust qemu qemu-xv6 qemu-gdb gdb debug asm clean check-xv6-rust
 
-OBJDUMP     := rust-objdump --arch-name=riscv64
-OBJCOPY     := rust-objcopy --binary-architecture=riscv64
+help:
+	@echo "Hypocaust build targets:"
+	@echo "  make qemu-xv6                    build xv6-rust, copy its artifacts, and boot"
+	@echo "  make xv6-rust                    refresh guest_kernel and fs.img only"
+	@echo "  make qemu                        boot using existing local guest artifacts"
+	@echo "  make qemu-gdb                    wait for GDB on TCP port 1234"
+	@echo "  make clean                       remove Hypocaust and copied guest artifacts"
+	@echo "  XV6_RUST_DIR=/path/to/xv6-rust  override the default sibling checkout"
 
-QEMU 		:= qemu-system-riscv64
-# QEMU's bundled OpenSBI tracks the current virt machine and loads the
-# hypervisor ELF at its linked 0x80200000 entry point.
-BOOTLOADER	:= default
+# feature/xv6-rust-production-readme provides a clear failure instead of
+# implicitly fetching or switching revisions in a developer-owned checkout.
+check-xv6-rust:
+	@test -f "$(XV6_RUST_DIR)/Makefile" || { \
+		echo "error: xv6-rust was not found at $(XV6_RUST_DIR)" >&2; \
+		echo "clone it as documented in README.md or set XV6_RUST_DIR" >&2; \
+		exit 1; \
+	}
 
-QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER) -kernel $(KERNEL_ELF) -nographic
-QEMUOPTS	+=-drive file=$(FS_IMG),if=none,format=raw,id=x0
-QEMUOPTS	+=-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
-
-
-
+# feature/xv6-rust-production-readme builds xv6-rust's single-hart SBI payload
+# and filesystem, then copies immutable inputs into the Hypocaust build context.
+xv6-rust: check-xv6-rust
+	$(MAKE) -C "$(XV6_RUST_DIR)" fs.img
+	$(MAKE) -C "$(XV6_RUST_DIR)" sbi
+	@test -f "$(XV6_RUST_KERNEL_ELF)" || { echo "error: missing $(XV6_RUST_KERNEL_ELF)" >&2; exit 1; }
+	@test -f "$(XV6_RUST_FS_IMG)" || { echo "error: missing $(XV6_RUST_FS_IMG)" >&2; exit 1; }
+	cp "$(XV6_RUST_KERNEL_ELF)" "$(GUEST_KERNEL_ELF)"
+	cp "$(XV6_RUST_FS_IMG)" "$(FS_IMG)"
 
 $(GUEST_KERNEL_ELF):
-	cd minikernel/user && cargo build --release
-	cd minikernel && cargo build && cp target/$(TARGET)/$(MODE)/minikernel ../guest_kernel
+	@echo "error: $(GUEST_KERNEL_ELF) is missing; run 'make xv6-rust' first" >&2
+	@false
 
-# $(GUEST_KERNEL_BIN): $(GUEST_KERNEL_ELF)
-# 	$(OBJCOPY) $(GUEST_KERNEL_ELF) --strip-all -O binary $@
+$(FS_IMG):
+	@echo "error: $(FS_IMG) is missing; run 'make xv6-rust' first" >&2
+	@false
 
 build: $(GUEST_KERNEL_ELF) $(FS_IMG)
 	cargo build $(GUEST_KERNEL_FEATURE)
 
-$(KERNEL_BIN): build 
+$(KERNEL_BIN): build
 	$(OBJCOPY) $(KERNEL_ELF) --strip-all -O binary $@
-
-	
 
 qemu: build
 	$(QEMU) $(QEMUOPTS)
 
-clean:
-	cargo clean
-	cd minikernel && cargo clean
-	cd minikernel/user && cargo clean
-	rm guest_kernel *.S $(FS_IMG)
+qemu-xv6: xv6-rust build
+	$(QEMU) $(QEMUOPTS)
 
 qemu-gdb: build
 	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234
@@ -63,16 +81,14 @@ gdb: $(KERNEL_ELF)
 
 debug: build
 	@tmux new-session -d \
-		"$(QEMU) $(QEMUOPTS) -s -S" && \
+		"$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234" && \
 		tmux split-window -h "$(GDB) -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
 		tmux -2 attach-session -d
 
-asm:
-	riscv64-unknown-elf-objdump -d target/riscv64gc-unknown-none-elf/debug/hypocaust > hyper.S 
-	riscv64-unknown-elf-objdump -d guest_kernel > guest.S 
+asm: build
+	$(OBJDUMP) -d $(KERNEL_ELF) > hyper.S
+	$(OBJDUMP) -d $(GUEST_KERNEL_ELF) > guest.S
 
-
-$(FS_IMG):
-	cd minikernel && make fs-img 
-	cp minikernel/user/target/$(TARGET)/release/fs.img ./
-	# touch fs.img
+clean:
+	cargo clean
+	rm -f $(GUEST_KERNEL_ELF) $(FS_IMG) hyper.S guest.S
