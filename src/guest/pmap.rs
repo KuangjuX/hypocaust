@@ -276,6 +276,20 @@ fn superpage_leaf(pte: PageTableEntry, walk: usize, base_vpn: usize) -> Option<G
     })
 }
 
+/// PR #60 (`fix-bug/superpage-expansion-path`) removes an upper-level Guest
+/// leaf before PageTable::map builds the Host-only lower levels beneath it.
+/// Leaving the Guest PPN installed would make the Host walker interpret Guest
+/// RAM as a Host page-table frame while expanding the superpage.
+fn prepare_superpage_leaf(
+    guest_pte: PageTableEntry,
+    host_pte: &mut PageTableEntry,
+    walk: usize,
+    base_vpn: usize,
+) -> Option<GuestSuperpageLeaf> {
+    *host_pte = PageTableEntry::empty();
+    superpage_leaf(guest_pte, walk, base_vpn)
+}
+
 fn install_superpage_leaves<P: PageTable>(
     spt: &mut P,
     guest_memory: &GuestMemory,
@@ -319,6 +333,13 @@ pub(crate) fn superpage_self_test() {
         PTEFlags::V | PTEFlags::R,
     );
     assert!(superpage_leaf(misaligned, 1, 0).is_none());
+
+    let mut shadow_leaf = aligned;
+    assert!(prepare_superpage_leaf(aligned, &mut shadow_leaf, 1, 0).is_some());
+    assert!(
+        !shadow_leaf.is_valid(),
+        "superpage expansion must detach the Guest leaf before allocating Host levels",
+    );
 }
 
 
@@ -443,8 +464,17 @@ fn synchronize_page_table<P: PageTable>(
                         guest_pte.flags(),
                     );
                     host_ptes[index] = host_pte;
-                } else if let Some(leaf) = superpage_leaf(*guest_pte, walk, entry_vpn) {
-                    superpages.push(leaf);
+                } else if guest_pte.is_valid() && walk < 2 && is_leaf(*guest_pte) {
+                    // PR #60 makes the mirrored path safe before deferred
+                    // expansion. Misaligned Guest superpages remain invalid.
+                    if let Some(leaf) = prepare_superpage_leaf(
+                        *guest_pte,
+                        &mut host_ptes[index],
+                        walk,
+                        entry_vpn,
+                    ) {
+                        superpages.push(leaf);
+                    }
                 } else if guest_pte.is_valid() && walk == 2 {
                     host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
@@ -524,10 +554,18 @@ fn initialize_shadow_page_table<P: PageTable>(
                         guest_pte.flags(),
                     );
                     host_ptes[index] = host_pte;
-                } else if let Some(leaf) = superpage_leaf(*guest_pte, walk, entry_vpn) {
+                } else if guest_pte.is_valid() && walk < 2 && is_leaf(*guest_pte) {
                     // PR #58 defers expansion until the mirrored hierarchy is
-                    // complete, so PageTable::map can allocate lower levels.
-                    superpages.push(leaf);
+                    // complete; PR #60 first detaches the Guest leaf so
+                    // PageTable::map allocates a genuine Host-owned path.
+                    if let Some(leaf) = prepare_superpage_leaf(
+                        *guest_pte,
+                        &mut host_ptes[index],
+                        walk,
+                        entry_vpn,
+                    ) {
+                        superpages.push(leaf);
+                    }
                 } else if guest_pte.is_valid() && walk == 2 {
                     host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
