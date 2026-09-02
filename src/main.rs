@@ -1,14 +1,14 @@
 //! The main module and entrypoint
 #![no_std]
 #![no_main]
-#![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
-#![feature(core_intrinsics)]
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
+// PR fix-bug/modern-rust-toolchain: the legacy linker-symbol casts and global
+// allocator storage are intentional low-level patterns. Keep them buildable
+// while retaining deny(warnings) for warnings that are actionable here.
+#![allow(function_casts_as_integer, static_mut_refs, dropping_references)]
 #![deny(warnings)]
-#![feature(naked_functions)]
-#![feature(asm_const)]
 
 
 extern crate alloc;
@@ -58,10 +58,12 @@ static BOOT_STACK: [u8; BOOT_STACK_SIZE] = [0u8; BOOT_STACK_SIZE];
 
 #[link_section = ".text.entry"]
 #[export_name = "_start"]
-#[naked]
+// PR fix-bug/modern-rust-toolchain: naked_asm keeps the boot entry free of a
+// compiler-generated prologue while using the current Rust naked-function API.
+#[unsafe(naked)]
 /// hypocaust entrypoint
 pub unsafe extern "C" fn start() -> ! {
-    core::arch::asm!(
+    core::arch::naked_asm!(
         // prepare stack
         "la sp, {boot_stack}",
         "li t2, {boot_stack_size}",
@@ -72,7 +74,6 @@ pub unsafe extern "C" fn start() -> ! {
         "call hentry",
         boot_stack = sym BOOT_STACK,
         boot_stack_size = const BOOT_STACK_SIZE,
-        options(noreturn)
     )
 }
 
@@ -121,4 +122,3 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         unreachable!()
     }
 }
-

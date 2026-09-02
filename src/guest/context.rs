@@ -39,7 +39,9 @@ impl ControlRegisters {
             scause: 0,
             stval: 0,
             satp: 0,
-            mtimecmp: core::usize::MAX
+            // PR fix-bug/modern-rust-toolchain: use the current associated
+            // constant while preserving the disabled-until-programmed timer.
+            mtimecmp: usize::MAX
         }
     }
 }

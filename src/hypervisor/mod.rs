@@ -9,6 +9,9 @@ use crate::debug::PageDebug;
 use crate::guest::context::TaskContext;
 use crate::guest::switch::__switch;
 
+// PR fix-bug/modern-rust-toolchain: preserve the allocator type re-export
+// while keeping deny(warnings) useful for all other imports.
+#[allow(unused_imports)]
 pub use self::hyp_alloc::FrameTracker;
 pub use self::fdt::MachineMeta;
 pub use self::shared::HYPERVISOR_MEMORY;
@@ -78,4 +81,3 @@ pub fn initialize_vmm(meta: MachineMeta) {
     );
     core::mem::forget(old);
 }
-

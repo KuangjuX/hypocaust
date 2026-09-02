@@ -1,2 +1,6 @@
 [toolchain]
-channel = "nightly" 
+# PR fix-bug/modern-rust-toolchain: pin the compiler used by hypocaust and its
+# xv6-rust payload so future nightly changes cannot silently break the build.
+channel = "nightly-2026-09-02"
+targets = ["riscv64gc-unknown-none-elf"]
+components = ["llvm-tools-preview"]
