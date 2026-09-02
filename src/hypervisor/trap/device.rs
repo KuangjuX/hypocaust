@@ -34,7 +34,10 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut
                 let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
                 let value = register_value(ctx, rs2);
                 if crate::device_emu::is_device_access(vaddr) {
-                    guest.virt_device.virtio.write(vaddr, value as u32, guest.vm_id);
+                    guest
+                        .virt_device
+                        .virtio
+                        .write(vaddr, value as u32, &guest.guest_memory);
                 }else{
                     guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
                 }

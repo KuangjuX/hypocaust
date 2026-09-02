@@ -1,3 +1,4 @@
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
@@ -17,6 +18,7 @@ use crate::identity::{VcpuId, VmId};
 pub mod switch;
 pub mod context;
 mod pmap;
+mod memory;
 mod shadow_stats;
 pub mod sbi;
 
@@ -24,16 +26,18 @@ use context::TaskContext;
 use riscv::addr::BitField;
 
 pub use self::context::ShadowState;
+pub use self::memory::GuestMemory;
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
 #[allow(unused_imports)]
-pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
+pub use self::pmap::{ShadowPageTables, PageTableRoot};
 
 /// PR #34 (`feature/vm-vcpu-identities`) makes a VM the ownership boundary for vCPUs.
-/// Guest memory and devices move to this level in later multi-Guest PRs once
-/// their interfaces no longer depend on vCPU-local state.
+/// PR #36 (`feature/vm-guest-memory`) moves Guest RAM here; virtual devices
+/// follow in a later multi-Guest PR.
 pub struct VirtualMachine<P: PageTable + PageDebug> {
     pub id: VmId,
+    guest_memory: Arc<GuestMemory>,
     vcpus: Vec<Vcpu<P>>,
 }
 
@@ -44,17 +48,29 @@ where
     pub fn new(id: VmId) -> Self {
         Self {
             id,
+            // PR #36 (`feature/vm-guest-memory`) makes the VM own the RAM
+            // capability shared by its vCPUs and checked translation clients.
+            guest_memory: Arc::new(
+                GuestMemory::for_vm(id).expect("VM has no Guest memory slot"),
+            ),
             vcpus: Vec::new(),
         }
     }
 
-    pub fn add_vcpu(&mut self, vcpu: Vcpu<P>) {
-        assert_eq!(vcpu.vm_id, self.id, "vCPU belongs to a different VM");
+    pub fn add_vcpu(&mut self, memory_set: MemorySet<P>, id: VcpuId) {
         assert!(
-            self.vcpus.iter().all(|existing| existing.id != vcpu.id),
+            self.vcpus.iter().all(|existing| existing.id != id),
             "duplicate vCPU ID",
         );
-        self.vcpus.push(vcpu);
+        self.vcpus.push(Vcpu::new(
+            memory_set,
+            id,
+            Arc::clone(&self.guest_memory),
+        ));
+    }
+
+    pub fn guest_memory(&self) -> &GuestMemory {
+        &self.guest_memory
     }
 
     pub fn vcpu(&self, id: VcpuId) -> Option<&Vcpu<P>> {
@@ -79,6 +95,9 @@ pub struct Vcpu<P: PageTable + PageDebug> {
     pub shadow_state: ShadowState<P>,
     pub vm_id: VmId,
     pub id: VcpuId,
+    /// PR #36 (`feature/vm-guest-memory`) shares the VM-owned immutable address
+    /// translation capability without copying or reconstructing memory slots.
+    pub guest_memory: Arc<GuestMemory>,
     /// PR #18 (fix-bug/smode-interrupt-forwarding): current virtual privilege mode.
     /// This is separate from sstatus.SPP, which records the mode before a trap.
     pub smode: bool,
@@ -87,7 +106,8 @@ pub struct Vcpu<P: PageTable + PageDebug> {
 }
 
 impl<P> Vcpu<P> where P: PageDebug + PageTable {
-    pub fn new(memory_set: MemorySet<P>, vm_id: VmId, id: VcpuId) -> Self {
+    fn new(memory_set: MemorySet<P>, id: VcpuId, guest_memory: Arc<GuestMemory>) -> Self {
+        let vm_id = guest_memory.vm_id();
         // 获取中断上下文的物理地址
         let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
         let trap_cx_ppn = memory_set
@@ -109,6 +129,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             shadow_state: ShadowState::new(),
             vm_id,
             id,
+            guest_memory,
             smode: true,
             virt_device: VirtDevice::new(vm_id),
         };
