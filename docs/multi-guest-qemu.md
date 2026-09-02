@@ -56,7 +56,9 @@ make qemu SMP=2
 
 Successful output includes configuration and scheduling lines for VM 0 and VM
 1, VM-labelled asynchronous VirtIO completion progress, and two xv6-rust boot
-sequences reaching file-system initialization. The shared SBI console can
-interleave characters; it is not part of the isolated Guest device model.
-With `SMP=1`, both Guests are time-sliced on one Host hart; `SMP=2`
-demonstrates concurrent execution.
+sequences reaching file-system initialization. PR #49
+(`feature/per-vm-console`) buffers and labels each Guest's SBI console records;
+VM 0 initially owns the shared physical input focus. OpenSBI's own M-mode
+diagnostics remain outside that multiplexer and can still interleave with a
+partial prompt. With `SMP=1`, both Guests are time-sliced on one Host hart;
+`SMP=2` demonstrates concurrent execution.
