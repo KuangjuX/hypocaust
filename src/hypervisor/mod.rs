@@ -6,7 +6,7 @@ use crate::debug::PageDebug;
 use crate::device_emu::DeviceBus;
 use crate::guest::context::TaskContext;
 use crate::guest::switch::__switch;
-use crate::guest::{Vcpu, VirtualMachine};
+use crate::guest::{Vcpu, VirtualInterrupt, VirtualMachine};
 use crate::identity::{HartId, VcpuKey, VmId};
 use crate::page_table::{PageTable, PageTableSv39};
 
@@ -123,6 +123,17 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
         Some(key)
     }
 
+    /// PR #40 updates only the selected vCPU's pending bits and asks the
+    /// scheduler which running or idle Host hart must be kicked.
+    pub fn inject_virtual_interrupt(
+        &mut self,
+        key: VcpuKey,
+        interrupt: VirtualInterrupt,
+    ) -> Option<HartId> {
+        self.vcpu_mut(key).inject_virtual_interrupt(interrupt);
+        self.scheduler.interrupt_target(key)
+    }
+
     fn vcpu_mut(&mut self, key: VcpuKey) -> &mut Vcpu<P> {
         self.vm_mut(key.vm_id)
             .and_then(|vm| vm.vcpu_mut(key.vcpu_id))
@@ -147,6 +158,9 @@ pub fn run_scheduler(hart_id: HartId) -> ! {
             .scheduler
             .mark_hart_online(hart_id);
     }
+    // PR #40 keeps Host software interrupts enabled during Guest execution so
+    // a targeted IPI can force prompt virtual-interrupt arbitration.
+    trap::enable_software_interrupt();
     loop {
         let next = {
             let mut guard = HYPOCAUST.lock();
@@ -195,12 +209,28 @@ pub fn wake_vcpu(key: VcpuKey) {
     }
 }
 
+/// PR #40 is the Host/device-backend entry point for targeted virtual IRQs.
+/// Sending the physical IPI outside the lock avoids blocking the destination.
+pub fn inject_virtual_interrupt(key: VcpuKey, interrupt: VirtualInterrupt) {
+    let target = {
+        let mut guard = HYPOCAUST.lock();
+        guard
+            .as_mut()
+            .unwrap()
+            .inject_virtual_interrupt(key, interrupt)
+    };
+    if let Some(hart_id) = target {
+        crate::sbi::send_ipi(hart_id);
+    }
+}
+
 
 
 pub fn initialize_vmm(meta: MachineMeta) {
     // PR #38 validates Ready/Running/Blocked transitions before any Guest can
     // enter the scheduler and make a failure harder to diagnose.
     scheduler::self_test();
+    crate::guest::virtual_interrupt_self_test();
     let old = HYPOCAUST.lock().replace(
         Hypervisor{
             meta,

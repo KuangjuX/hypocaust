@@ -3,7 +3,6 @@ use alloc::vec::Vec;
 
 use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
 use crate::constants::csr::sip::SSIP;
-use crate::constants::csr::status::STATUS_SIE_BIT;
 use crate::debug::PageDebug;
 use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable};
@@ -25,7 +24,8 @@ pub mod sbi;
 use context::TaskContext;
 use riscv::addr::BitField;
 
-pub use self::context::ShadowState;
+pub use self::context::{ShadowState, VirtualInterrupt};
+pub(crate) use self::context::virtual_interrupt_self_test;
 pub use self::memory::GuestMemory;
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
@@ -205,31 +205,33 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         }
     }
 
+    /// PR #40 queues an interrupt in this vCPU only. Device backends select
+    /// their destination with a `VcpuKey` before calling this method.
+    pub fn inject_virtual_interrupt(&mut self, interrupt: VirtualInterrupt) {
+        self.shadow_state.csrs.inject_interrupt(interrupt);
+    }
+
+    /// PR #40 deasserts one virtual interrupt source without disturbing other
+    /// pending sources owned by this vCPU.
+    pub fn clear_virtual_interrupt(&mut self, interrupt: VirtualInterrupt) {
+        self.shadow_state.csrs.clear_interrupt(interrupt);
+    }
+
     pub fn set_csr(&mut self, csr: usize, val: usize) {
         let shadow_state = &mut self.shadow_state;
         match csr {
             csr::sstatus => { 
-                if val.get_bit(STATUS_SIE_BIT) {
-                    // Enabling interruots might casue one to happen right away
-                    shadow_state.interrupt = true;
-                }
                 shadow_state.csrs.sstatus  = val
              }
             csr::stvec => shadow_state.csrs.stvec = val,
             csr::sie => { 
                 let value = val & (SEIE | STIE | SSIE);
-                if !shadow_state.csrs.sie & value != 0{
-                    shadow_state.interrupt = true;
-                }
                 if value.get_bit(STIE_BIT) {
                     unsafe{ riscv::register::sie::set_stimer() };
                 }
                 shadow_state.csrs.sie = val;
             }
             csr::sip => {
-                if val & SSIP != 0 {
-                    shadow_state.interrupt = true;
-                }
                 shadow_state.csrs.sip = (shadow_state.csrs.sip & !SSIP) | (val & SSIP);
             }
             csr::sscratch => shadow_state.csrs.sscratch = val,

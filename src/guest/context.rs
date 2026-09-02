@@ -2,6 +2,7 @@ use riscv::addr::BitField;
 
 
 use crate::hypervisor::trap::trap_return;
+use crate::constants::csr::sip::{SEIP, SSIP, STIP};
 use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT};
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
@@ -28,6 +29,33 @@ pub struct ControlRegisters {
     pub mtimecmp: usize
 }
 
+/// PR #40 (`feature/per-vcpu-virtual-interrupts`) names the three Supervisor
+/// interrupt classes that Hypocaust can inject into one selected vCPU.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VirtualInterrupt {
+    External,
+    Software,
+    Timer,
+}
+
+impl VirtualInterrupt {
+    pub const fn pending_bit(self) -> usize {
+        match self {
+            Self::External => SEIP,
+            Self::Software => SSIP,
+            Self::Timer => STIP,
+        }
+    }
+
+    pub const fn cause(self) -> usize {
+        match self {
+            Self::External => 9,
+            Self::Software => 1,
+            Self::Timer => 5,
+        }
+    }
+}
+
 impl ControlRegisters {
     pub const fn new() -> Self {
         Self {
@@ -45,14 +73,59 @@ impl ControlRegisters {
             mtimecmp: usize::MAX
         }
     }
+
+    /// PR #40 records a virtual interrupt only in this vCPU's shadow `sip`.
+    pub fn inject_interrupt(&mut self, interrupt: VirtualInterrupt) {
+        self.sip |= interrupt.pending_bit();
+    }
+
+    /// PR #40 lets a virtual device or timer deassert its own interrupt line.
+    pub fn clear_interrupt(&mut self, interrupt: VirtualInterrupt) {
+        self.sip &= !interrupt.pending_bit();
+    }
+
+    /// PR #40 applies the architectural SEI > SSI > STI priority order after
+    /// masking pending sources with this vCPU's shadow `sie` register.
+    pub fn next_enabled_interrupt(&self) -> Option<VirtualInterrupt> {
+        let deliverable = self.sip & self.sie;
+        [
+            VirtualInterrupt::External,
+            VirtualInterrupt::Software,
+            VirtualInterrupt::Timer,
+        ]
+        .into_iter()
+        .find(|interrupt| deliverable & interrupt.pending_bit() != 0)
+    }
+}
+
+/// PR #40 checks per-vCPU pending-bit isolation operations and the mandated
+/// priority order without relying on a standard-library test harness.
+pub fn virtual_interrupt_self_test() {
+    let mut registers = ControlRegisters::new();
+    registers.sie = SEIP | SSIP | STIP;
+    registers.inject_interrupt(VirtualInterrupt::Timer);
+    registers.inject_interrupt(VirtualInterrupt::Software);
+    registers.inject_interrupt(VirtualInterrupt::External);
+    assert_eq!(
+        registers.next_enabled_interrupt(),
+        Some(VirtualInterrupt::External),
+    );
+    registers.clear_interrupt(VirtualInterrupt::External);
+    assert_eq!(
+        registers.next_enabled_interrupt(),
+        Some(VirtualInterrupt::Software),
+    );
+    registers.clear_interrupt(VirtualInterrupt::Software);
+    assert_eq!(
+        registers.next_enabled_interrupt(),
+        Some(VirtualInterrupt::Timer),
+    );
 }
 
 pub struct ShadowState<P: PageTable + PageDebug> {
     pub csrs: ControlRegisters,
     /// 影子页表
     pub shadow_page_tables: ShadowPageTables<P>,
-    /// 是否发生中断
-    pub interrupt: bool,
     /// 连续切换页表次数
     pub conseutive_satp_switch_count: usize,
     /// PR #24 (`feature/shadow-paging-profile`) records the work performed
@@ -65,7 +138,6 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
         Self {
             csrs: ControlRegisters::new(),
             shadow_page_tables: ShadowPageTables::new(),
-            interrupt: false,
             conseutive_satp_switch_count: 0,
             shadow_paging_stats: ShadowPagingStats::new(),
         }
@@ -88,9 +160,6 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
     /// trapping into supervisor mode. When a trap is taken into supervisor mode, `SPIE` is set 
     /// to 0. When an `SRET` instruction is executed, `SIE` is set to `SPIE`, then `SPIE` is set to 1.
     pub fn pop_sie(&mut self) {
-        if !self.csrs.sstatus.get_bit(STATUS_SIE_BIT) && self.csrs.sstatus.get_bit(STATUS_SPIE_BIT) {
-            self.interrupt = true;
-        }
         self.csrs.sstatus.set_bit(STATUS_SIE_BIT, self.csrs.sstatus.get_bit(STATUS_SPIE_BIT));
         self.csrs.sstatus.set_bit(STATUS_SPIE_BIT, true);
     }

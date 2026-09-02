@@ -113,6 +113,21 @@ impl Scheduler {
             .map(HartId::new)
     }
 
+    /// PR #40 chooses the Host hart that must leave Guest or idle execution to
+    /// observe a newly injected interrupt. Blocked vCPUs become ready first.
+    pub fn interrupt_target(&mut self, key: VcpuKey) -> Option<HartId> {
+        let (registered_key, state) = self
+            .states
+            .get(&key.vcpu_id)
+            .expect("interrupting an unknown vCPU");
+        assert_eq!(*registered_key, key, "vCPU key does not match registration");
+        match *state {
+            VcpuRunState::Running(hart_id) => Some(hart_id),
+            VcpuRunState::Blocked => self.wake(key),
+            VcpuRunState::Ready => None,
+        }
+    }
+
     fn take_current(&mut self, hart_id: HartId) -> Option<VcpuKey> {
         self.current
             .get_mut(hart_id.index())
@@ -135,8 +150,9 @@ pub fn self_test() {
     scheduler.register(second);
     assert_eq!(scheduler.schedule(HartId::new(0)), Some(first));
     assert_eq!(scheduler.schedule(HartId::new(1)), Some(second));
+    assert_eq!(scheduler.interrupt_target(first), Some(HartId::new(0)));
     assert_eq!(scheduler.block_current(HartId::new(1)), None);
-    assert_eq!(scheduler.wake(second), Some(HartId::new(1)));
+    assert_eq!(scheduler.interrupt_target(second), Some(HartId::new(1)));
     assert_eq!(scheduler.schedule(HartId::new(1)), Some(second));
     assert_eq!(scheduler.preempt(HartId::new(0)), Some(first));
 }
