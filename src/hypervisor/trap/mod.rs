@@ -90,6 +90,7 @@ pub fn trap_handler() -> ! {
         Trap::Exception(Exception::Breakpoint) => { 
             ifault(guest, ctx);
         }
+        Trap::Exception(Exception::LoadPageFault) |
         Trap::Exception(Exception::StorePageFault) => {
             if !handle_page_fault(guest, ctx) {
                 htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
@@ -159,5 +160,4 @@ pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
         _ => { panic!("scause: {:?}, spec: {:#x}, stval: {:#x}", scause.cause(), sepc, stval::read())}
     }
 }
-
 
