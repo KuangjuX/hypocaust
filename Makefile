@@ -12,8 +12,8 @@ FS_IMG := fs.img
 GUEST_KERNEL_ELF := guest_kernel
 GUEST_KERNEL_FEATURE := --features embed_guest_kernel
 
-# feature/xv6-rust-production-readme treats xv6-rust as an independent guest
-# project. Override this path when it is not checked out beside Hypocaust.
+# PR #28 (`feature/xv6-rust-production-readme`) treats xv6-rust as an
+# independent Guest. Override this path when it is not checked out beside us.
 XV6_RUST_DIR ?= ../xv6-rust
 XV6_RUST_KERNEL_ELF := $(XV6_RUST_DIR)/kernel/target/$(TARGET)/$(MODE)/kernel
 XV6_RUST_FS_IMG := $(XV6_RUST_DIR)/fs.img
@@ -34,8 +34,8 @@ help:
 	@echo "  make clean                       remove Hypocaust and copied guest artifacts"
 	@echo "  XV6_RUST_DIR=/path/to/xv6-rust  override the default sibling checkout"
 
-# feature/xv6-rust-production-readme provides a clear failure instead of
-# implicitly fetching or switching revisions in a developer-owned checkout.
+# PR #28 (`feature/xv6-rust-production-readme`) fails clearly instead of
+# fetching or switching revisions in a developer-owned checkout.
 check-xv6-rust:
 	@test -f "$(XV6_RUST_DIR)/Makefile" || { \
 		echo "error: xv6-rust was not found at $(XV6_RUST_DIR)" >&2; \
@@ -43,8 +43,8 @@ check-xv6-rust:
 		exit 1; \
 	}
 
-# feature/xv6-rust-production-readme builds xv6-rust's single-hart SBI payload
-# and filesystem, then copies immutable inputs into the Hypocaust build context.
+# PR #28 (`feature/xv6-rust-production-readme`) builds xv6-rust's single-hart
+# SBI payload and filesystem, then copies them into our build context.
 xv6-rust: check-xv6-rust
 	$(MAKE) -C "$(XV6_RUST_DIR)" fs.img
 	$(MAKE) -C "$(XV6_RUST_DIR)" sbi

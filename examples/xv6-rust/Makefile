@@ -9,7 +9,7 @@ help:
 	@echo "  make run      prepare the artifacts and boot Hypocaust"
 	@echo "  XV6_RUST_DIR=/path/to/xv6-rust overrides the sibling checkout"
 
-# feature/xv6-rust-production-readme keeps this example source-independent:
+# PR #28 (`feature/xv6-rust-production-readme`) keeps this example independent:
 # it delegates artifact preparation without vendoring or mutating xv6-rust.
 prepare:
 	$(MAKE) -C "$(HYPOCAUST_DIR)" xv6-rust XV6_RUST_DIR="$(abspath $(XV6_RUST_DIR))"
