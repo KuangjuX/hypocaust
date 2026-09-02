@@ -3,11 +3,13 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
 use crate::debug::PageDebug;
-use crate::device_emu::is_device_access;
 use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::identity::VmId;
 use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
-use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT};
+use crate::constants::layout::{
+    GUEST_KERNEL_VIRT_END, GUEST_KERNEL_VIRT_START, PAGE_SIZE, TRAMPOLINE,
+    TRAP_CONTEXT,
+};
 
 use super::Vcpu;
 use super::shadow_stats::ShadowPageTableUpdate;
@@ -222,6 +224,24 @@ pub fn page_table_mode<P: PageTable>(page_table: P, vm_id: VmId) -> PageTableRoo
     PageTableRoot::UVA
 }
 
+/// PR #35 (`fix-bug/non-ram-shadow-leaves`) maps only Guest RAM into shadow
+/// leaves. MMIO and other non-RAM GPAs remain invalid and trap to Hypocaust.
+fn shadow_leaf_pte(guest_pte: PageTableEntry, vm_id: VmId) -> PageTableEntry {
+    let guest_page = guest_pte.ppn().0 << 12;
+    let page_in_ram = guest_page >= GUEST_KERNEL_VIRT_START
+        && guest_page
+            .checked_add(PAGE_SIZE)
+            .map_or(false, |end| end <= GUEST_KERNEL_VIRT_END);
+    if page_in_ram {
+        PageTableEntry::new(
+            PhysPageNum::from(gpa2hpa(guest_page, vm_id) >> 12),
+            guest_pte.flags() | PTEFlags::U,
+        )
+    } else {
+        PageTableEntry::empty()
+    }
+}
+
 
 
 fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
@@ -331,8 +351,7 @@ fn synchronize_page_table<P: PageTable>(
                     let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags());
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
-                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags() | PTEFlags::U);
-                    host_ptes[index] = host_pte;
+                    host_ptes[index] = shadow_leaf_pte(*guest_pte, vm_id);
                 }
             }
             page_table_pages.push(GuestPageTablePageState {
@@ -394,15 +413,7 @@ fn initialize_shadow_page_table<P: PageTable>(
                     let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags());
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
-                    let host_pte;
-                    if !is_device_access(guest_pte.ppn().0 << 12) {
-                        host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags() | PTEFlags::U);
-                    }else{
-                        // PR #17 (fix-bug/virtio-dma-translation): leave passthrough
-                        // devices unmapped so MMIO traps before reaching QEMU.
-                        host_pte = PageTableEntry::empty();
-                    }
-                    host_ptes[index] = host_pte;
+                    host_ptes[index] = shadow_leaf_pte(*guest_pte, vm_id);
                 }
             }
             page_table_pages.push(GuestPageTablePageState {
@@ -665,10 +676,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             let pte_array = host_ppn.get_pte_array();
             if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
                 // 叶子节点
-                let new_ppn = PhysPageNum::from(gpa2hpa(pte.ppn().0 << 12, vm_id) >> 12);
-                let new_flags = pte.flags() | PTEFlags::U;
-                let new_pte = PageTableEntry::new(new_ppn, new_flags);
-                pte_array[index] = new_pte;
+                pte_array[index] = shadow_leaf_pte(pte, vm_id);
                 let vpn = VirtPageNum::from(va >> 12);
                 if let Some(pte) = guest_spt.translate(vpn) {
                     if pte.writable() | pte.executable() {
