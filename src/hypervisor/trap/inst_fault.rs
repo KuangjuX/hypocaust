@@ -49,6 +49,12 @@ pub fn ifault<P: PageTable + PageDebug>(
                     match response.action {
                         SbiAction::None => {}
                         SbiAction::SetTimer(stime) => program_guest_timer(guest, stime),
+                        // PR #56 makes successful SRST shutdown non-returning,
+                        // as required by SBI, and delegates VM lifecycle to
+                        // the same scheduler path as legacy shutdown.
+                        SbiAction::StopCurrentVm => {
+                            return InstructionOutcome::StopCurrentVm;
+                        }
                     }
                     ctx.x[10] = response.error;
                     ctx.x[11] = response.value;
