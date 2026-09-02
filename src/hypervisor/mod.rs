@@ -123,6 +123,16 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
         Some(key)
     }
 
+    /// PR #55 stops only the VM currently owned by this Host hart and binds
+    /// the next runnable VM, if any, without forwarding shutdown to Host SBI.
+    pub fn stop_current_vm(&mut self, hart_id: HartId) -> (VmId, Option<VcpuKey>) {
+        let (vm_id, next) = self.scheduler.stop_current_vm(hart_id);
+        if let Some(key) = next {
+            self.bind_vcpu_to_hart(key, hart_id);
+        }
+        (vm_id, next)
+    }
+
     /// PR #40 updates only the selected vCPU's pending bits and asks the
     /// scheduler which running or idle Host hart must be kicked.
     pub fn inject_virtual_interrupt(

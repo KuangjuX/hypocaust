@@ -7,13 +7,20 @@ use crate::debug::PageDebug;
 use crate::device_emu::DeviceBus;
 use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
-use crate::sbi::{ set_timer, shutdown };
+use crate::sbi::set_timer;
 use crate::guest::sbi::{
     dispatch_modern, SbiAction, SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR,
     SBI_SET_TIMER, SBI_SHUTDOWN,
 };
 use crate::guest::{Vcpu, VirtualInterrupt};
 
+/// Result of emulating one instruction trapped from a Guest.
+pub(super) enum InstructionOutcome {
+    Resume,
+    /// PR #55 turns a Guest shutdown ecall into a scheduler lifecycle event
+    /// instead of forwarding it to the Host firmware.
+    StopCurrentVm,
+}
 
 
 /// 处理特权级指令问题
@@ -21,7 +28,7 @@ pub fn ifault<P: PageTable + PageDebug>(
     guest: &mut Vcpu<P>,
     device_bus: &mut DeviceBus,
     ctx: &mut TrapContext,
-) {
+) -> InstructionOutcome {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -30,7 +37,7 @@ pub fn ifault<P: PageTable + PageDebug>(
                 // valid only from virtual S-mode; U-mode ecalls are guest syscalls.
                 if !guest.smode {
                     forward_exception(guest, ctx);
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 // PR #54 (`feature/sbi-v02-base-time`) decodes the modern ABI
                 // before falling back to legacy calls. SBI v0.2 uses a7/a6 for
@@ -58,11 +65,13 @@ pub fn ifault<P: PageTable + PageDebug>(
                             let c = device_bus.console_getchar();
                             ctx.x[10] = c;
                         }
-                        SBI_SHUTDOWN => shutdown(),
+                        // PR #55 contains legacy shutdown within the owning
+                        // VM. The trap handler performs the scheduler change.
+                        SBI_SHUTDOWN => return InstructionOutcome::StopCurrentVm,
                         _ => {
                             // hdebug!("forward exception: sepc -> {:#x}", ctx.sepc);
                             forward_exception(guest, ctx);
-                            return;
+                            return InstructionOutcome::Resume;
                         }
                     }
                 }
@@ -72,10 +81,10 @@ pub fn ifault<P: PageTable + PageDebug>(
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
                 let Some(val) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 if mask != 0 && !write_guest_csr(guest, ctx, csr, val & !mask) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, rd, val);
             }
@@ -84,10 +93,10 @@ pub fn ifault<P: PageTable + PageDebug>(
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
                 let Some(val) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 if mask != 0 && !write_guest_csr(guest, ctx, csr, val | mask) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, rd, val);
             }
@@ -95,44 +104,44 @@ pub fn ifault<P: PageTable + PageDebug>(
             riscv_decode::Instruction::Csrrw(i) => {
                 let csr = i.csr() as usize;
                 let Some(prev) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 // 向 Shadow CSR 写入
                 let val = read_register(ctx, i.rs1() as usize);
                 if !write_guest_csr(guest, ctx, csr, val) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrwi(i) => {
                 let csr = i.csr() as usize;
                 let Some(prev) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 if !write_guest_csr(guest, ctx, csr, i.zimm() as usize) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             }
             riscv_decode::Instruction::Csrrsi(i) => {
                 let csr = i.csr() as usize;
                 let Some(prev) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 let mask = i.zimm() as usize;
                 if mask != 0 && !write_guest_csr(guest, ctx, csr, prev | mask) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrci(i) => {
                 let csr = i.csr() as usize;
                 let Some(prev) = read_guest_csr(guest, ctx, csr) else {
-                    return;
+                    return InstructionOutcome::Resume;
                 };
                 let mask = i.zimm() as usize;
                 if mask != 0 && !write_guest_csr(guest, ctx, csr, prev & !mask) {
-                    return;
+                    return InstructionOutcome::Resume;
                 }
                 write_register(ctx, i.rd() as usize, prev);
             }
@@ -148,7 +157,7 @@ pub fn ifault<P: PageTable + PageDebug>(
                 guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
                 guest.smode = return_to_smode;
                 // hdebug!("sret: spec -> {:#x}", ctx.sepc);
-                return;
+                return InstructionOutcome::Resume;
             }
             riscv_decode::Instruction::SfenceVma(i) => {
                 // PR #48 (`fix-bug/guest-exception-forwarding`) accepts both
@@ -166,16 +175,17 @@ pub fn ifault<P: PageTable + PageDebug>(
                 // PR #48 lets the Guest kernel decide how to handle a legal
                 // trap cause that Hypocaust does not virtualize.
                 forward_exception(guest, ctx);
-                return;
+                return InstructionOutcome::Resume;
             }
         }
     }else{
         // PR #48 must not advance from the newly installed Guest trap vector.
         // The old code added `len` after forwarding and entered stvec+2/4.
         forward_exception(guest, ctx);
-        return;
+        return InstructionOutcome::Resume;
     }
     ctx.sepc += len;
+    InstructionOutcome::Resume
 }
 
 /// Program one vCPU's virtual deadline and deassert its previous timer IRQ.
