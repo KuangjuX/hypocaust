@@ -6,6 +6,7 @@ use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT};
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
 use super::pmap::ShadowPageTables;
+use super::shadow_stats::ShadowPagingStats;
 
 
 pub struct ControlRegisters {
@@ -53,7 +54,10 @@ pub struct ShadowState<P: PageTable + PageDebug> {
     /// 是否发生中断
     pub interrupt: bool,
     /// 连续切换页表次数
-    pub conseutive_satp_switch_count: usize
+    pub conseutive_satp_switch_count: usize,
+    /// `feature/shadow-paging-profile` records the work performed while
+    /// maintaining shadow page tables so later optimization PRs have a baseline.
+    pub shadow_paging_stats: ShadowPagingStats,
 }
 
 impl<P> ShadowState<P> where P: PageTable + PageDebug {
@@ -62,7 +66,8 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
             csrs: ControlRegisters::new(),
             shadow_page_tables: ShadowPageTables::new(),
             interrupt: false,
-            conseutive_satp_switch_count: 0
+            conseutive_satp_switch_count: 0,
+            shadow_paging_stats: ShadowPagingStats::new(),
         }
     }
 

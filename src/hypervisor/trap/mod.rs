@@ -83,6 +83,9 @@ pub fn trap_handler() -> ! {
     let stval = stval::read();
     // get guest kernel
     let guest = hypervisor.current_guest();
+    // `feature/shadow-paging-profile` counts every transition from the
+    // deprivileged guest into Hypocaust to correlate traps with paging work.
+    guest.shadow_state.shadow_paging_stats.record_trap();
     match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             ifault(guest, ctx);
