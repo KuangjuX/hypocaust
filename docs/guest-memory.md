@@ -41,7 +41,7 @@ capability. Its vCPUs share that capability because page-table emulation runs
 in vCPU trap context. Consumers can request translations, but cannot mutate or
 reconstruct another VM's slot.
 
-This PR intentionally leaves the vCPU address-space mappings and virtual
-devices in their existing location. Later PRs move the device model to a
-per-VM bus and replace QEMU passthrough DMA with a backend that copies through
-checked Guest memory APIs.
+This PR originally left vCPU mappings and virtual devices in their existing
+location. PR #39 moved the device model to a per-VM bus, and PR #47
+(`feature/iommu-passthrough-policy`) now classifies the checked QEMU DMA path
+as mediated. Real passthrough requires a separate IOMMU-protected adapter.

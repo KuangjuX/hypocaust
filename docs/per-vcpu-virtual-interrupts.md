@@ -76,8 +76,8 @@ make qemu SMP=2
 xv6-rust reaches VirtIO-backed file-system initialization while the second
 Host hart remains online in the scheduler.
 
-## Next step
+## Historical next step
 
-The current block backend remains synchronous passthrough. The asynchronous
-VirtIO backend PR will use this API to inject an external interrupt into the
-configured vCPU after a checked DMA request completes, waking it if necessary.
+At this PR boundary the block backend was still synchronous. PR #42 made it an
+asynchronous mediated backend, and PR #47 (`feature/iommu-passthrough-policy`)
+reserves passthrough for devices protected by an IOMMU and interrupt remapping.
