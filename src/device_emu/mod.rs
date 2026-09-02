@@ -9,6 +9,7 @@ pub use virtio::{ VirtIO, is_device_access };
 /// Software emulated device used in VMM
 pub struct VirtDevice {
     pub qemu_virt_tester: qemu_virt::QemuVirtTester,
+    pub virtio: VirtIO,
     pub uart: Uart
 }
 
@@ -16,6 +17,7 @@ impl VirtDevice {
     pub fn new(guest_id: usize) -> Self {
         Self { 
             qemu_virt_tester: qemu_virt::QemuVirtTester::new(),
+            virtio: VirtIO::new(0x1000_1000),
             uart: Uart::new(guest_id)
         }
     }
