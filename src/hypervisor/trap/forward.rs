@@ -6,11 +6,11 @@ use crate::constants::csr::sip::{SEIP_BIT, STIP_BIT};
 use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPP_BIT};
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
-use crate::guest::GuestKernel;
+use crate::guest::Vcpu;
 use super::TrapContext;
 
 /// 检测 Guest OS 是否发生中断，若有则进行转发
-pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
     // 没有发生中断，返回
     if !guest.shadow_state.interrupt { return }
     let guest_was_in_smode = guest.smode;
@@ -43,7 +43,7 @@ pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel
 }
 
 /// 向 guest kernel 转发异常
-pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
     let guest_was_in_smode = guest.smode;
     let state = &mut guest.shadow_state;
     state.csrs.scause = scause::read().code();

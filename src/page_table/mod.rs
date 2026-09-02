@@ -7,6 +7,7 @@ mod sv57;
 
 use alloc::vec::Vec;
 use crate::guest::gpa2hpa;
+use crate::identity::VmId;
 
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 // PR #16 (fix-bug/modern-rust-toolchain): preserve the module's public helpers
@@ -24,14 +25,14 @@ pub trait PageTable: Clone {
     fn root_ppn(&self) -> PhysPageNum;
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
-    fn find_guest_pte(&self, vpn: VirtPageNum, hart_id: usize) -> Option<&mut PageTableEntry>;
+    fn find_guest_pte(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<&mut PageTableEntry>;
     #[allow(unused)]
     fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags);
     #[allow(unused)]
     fn unmap(&mut self, vpn: VirtPageNum);
     fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry>;
     #[allow(unused)]
-    fn translate_guest(&self, vpn: VirtPageNum, hart_id: usize) -> Option<PageTableEntry>;
+    fn translate_guest(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<PageTableEntry>;
     fn token(&self) -> usize;
     /// page walk，并返回所有 `walk` 过的所有页表项
     fn walk_page_table<R: Fn(usize) -> usize>(root: usize, va: usize, read_pte: R) -> Option<PageWalk>;
@@ -90,9 +91,13 @@ pub struct AddressTranslation {
 
 
 /// 将 guest vaddr 翻译为 host paddr，并返回 `AddressTranslation`
-pub fn translate_guest_address<P: PageTable>(hart_id: usize, root_page_table: usize, va: usize) -> Option<AddressTranslation> {
+pub fn translate_guest_address<P: PageTable>(
+    vm_id: VmId,
+    root_page_table: usize,
+    va: usize,
+) -> Option<AddressTranslation> {
     P::walk_page_table(root_page_table, va, |va|{
-        let pa = gpa2hpa(va, hart_id);
+        let pa = gpa2hpa(va, vm_id);
         unsafe{ core::ptr::read(pa as *const usize) }
     }).map(|t| {
         AddressTranslation {

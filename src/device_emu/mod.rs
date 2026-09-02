@@ -1,6 +1,7 @@
 mod uart;
 mod plic;
 mod virtio;
+use crate::identity::VmId;
 pub use uart::Uart;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
@@ -19,11 +20,11 @@ pub struct VirtDevice {
 }
 
 impl VirtDevice {
-    pub fn new(guest_id: usize) -> Self {
+    pub fn new(vm_id: VmId) -> Self {
         Self { 
             qemu_virt_tester: qemu_virt::QemuVirtTester::new(),
             virtio: VirtIO::new(0x1000_1000),
-            uart: Uart::new(guest_id)
+            uart: Uart::new(vm_id)
         }
     }
 

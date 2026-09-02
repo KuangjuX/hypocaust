@@ -4,7 +4,7 @@ use crate::constants::csr::sie::STIE_BIT;
 use crate::constants::csr::sip::STIP_BIT;
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
-use crate::guest::GuestKernel;
+use crate::guest::Vcpu;
 use crate::sbi::set_timer;
 use crate::timer::get_default_timer;
 use crate::timer::get_time;
@@ -24,7 +24,7 @@ fn register_value(ctx: &TrapContext, register: usize) -> usize {
     if register == 0 { 0 } else { ctx.x[register] }
 }
 
-pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -34,7 +34,7 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ct
                 let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
                 let value = register_value(ctx, rs2);
                 if crate::device_emu::is_device_access(vaddr) {
-                    guest.virt_device.virtio.write(vaddr, value as u32, guest.guest_id);
+                    guest.virt_device.virtio.write(vaddr, value as u32, guest.vm_id);
                 }else{
                     guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
                 }
@@ -60,7 +60,7 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ct
 }
 
 /// 时钟中断处理函数
-pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>) {
+pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>) {
     let time = get_time();
     let mut next = time + get_default_timer();
     if guest.shadow_state.csrs.sie.get_bit(STIE_BIT) {

@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use crate::identity::VmId;
 
 pub struct Uart {
     pub dlab: bool,
@@ -12,11 +13,11 @@ pub struct Uart {
     pub input_bytes_ready: usize,
 
     pub line_buffer: ArrayVec<u8, 256>,
-    pub guest_id: usize
+    pub vm_id: VmId
 }
 
 impl Uart {
-    pub const fn new(guest_id: usize) -> Self {
+    pub const fn new(vm_id: VmId) -> Self {
         Self{
             dlab: false,
             interrupt_enable: 0,
@@ -25,8 +26,7 @@ impl Uart {
             input_fifo: [0; 16],
             input_bytes_ready: 0,
             line_buffer: ArrayVec::new_const(),
-            guest_id
+            vm_id
         }
     }
 }
-
