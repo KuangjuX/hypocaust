@@ -233,6 +233,7 @@ pub fn initialize_vmm(meta: MachineMeta) {
     crate::guest::virtual_interrupt_self_test();
     crate::page_table::translation_self_test();
     crate::device_emu::passthrough_self_test();
+    trap::exception_routing_self_test();
     // PR #45 (`feature/multi-guest-qemu`) maps every active VirtIO aperture
     // reported by the Host DTB before a VM backend dereferences its registers.
     // These are Host mappings; per-VM DeviceBus config controls Guest access.

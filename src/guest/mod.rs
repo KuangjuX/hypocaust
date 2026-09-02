@@ -264,18 +264,21 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         }
     }
 
-    pub fn get_csr(&self, csr: usize) -> usize {
+    /// PR #48 returns `None` for a CSR that Hypocaust does not virtualize so
+    /// the illegal instruction can be injected into the Guest instead of
+    /// reaching a Host `unreachable!()`.
+    pub fn get_csr(&self, csr: usize) -> Option<usize> {
         let shadow_state = &self.shadow_state;
         match csr {
-            csr::sstatus => shadow_state.csrs.sstatus,
-            csr::stvec => shadow_state.csrs.stvec,
-            csr::sie => shadow_state.csrs.sie,
-            csr::sscratch => shadow_state.csrs.sscratch,
-            csr::sepc => shadow_state.csrs.sepc,
-            csr::scause => shadow_state.csrs.scause,
-            csr::stval => shadow_state.csrs.stval,
-            csr::satp => shadow_state.csrs.satp,
-            _ => unreachable!(),
+            csr::sstatus => Some(shadow_state.csrs.sstatus),
+            csr::stvec => Some(shadow_state.csrs.stvec),
+            csr::sie => Some(shadow_state.csrs.sie),
+            csr::sscratch => Some(shadow_state.csrs.sscratch),
+            csr::sepc => Some(shadow_state.csrs.sepc),
+            csr::scause => Some(shadow_state.csrs.scause),
+            csr::stval => Some(shadow_state.csrs.stval),
+            csr::satp => Some(shadow_state.csrs.satp),
+            _ => None,
         }
     }
 
@@ -291,7 +294,8 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         self.shadow_state.csrs.clear_interrupt(interrupt);
     }
 
-    pub fn set_csr(&mut self, csr: usize, val: usize) {
+    /// PR #48 reports unsupported CSR writes to the instruction emulator.
+    pub fn set_csr(&mut self, csr: usize, val: usize) -> bool {
         let shadow_state = &mut self.shadow_state;
         match csr {
             csr::sstatus => { 
@@ -321,11 +325,12 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         shadow_state.csrs.satp = satp;
                         self.make_shadow_page_table(satp);
                     }
-                    _ => panic!("Install page table with unsupported mode?") 
+                    _ => return false,
                 }
             }
-            _ => unreachable!()
+            _ => return false,
         }
+        true
     }
     
 

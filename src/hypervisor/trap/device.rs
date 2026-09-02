@@ -30,7 +30,7 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
     guest: &mut Vcpu<P>,
     device_bus: &mut DeviceBus,
     ctx: &mut TrapContext,
-) {
+) -> bool {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -41,28 +41,34 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
                 let value = register_value(ctx, rs2);
                 // PR #39 routes the reconstructed Guest address only through
                 // the DeviceBus owned by this vCPU's VM.
-                assert!(device_bus.write_u32(vaddr, value as u32));
+                if !device_bus.write_u32(vaddr, value as u32) {
+                    return false;
+                }
             },
             riscv_decode::Instruction::Lw(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let value = device_bus
-                    .read_u32(vaddr)
-                    .expect("MMIO read outside the current VM's device bus");
+                let Some(value) = device_bus.read_u32(vaddr) else {
+                    return false;
+                };
                 if i.rd() != 0 {
                     ctx.x[i.rd() as usize] = value as i32 as isize as usize;
                 }
             },
             riscv_decode::Instruction::Lwu(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let value = device_bus
-                    .read_u32(vaddr)
-                    .expect("MMIO read outside the current VM's device bus");
+                let Some(value) = device_bus.read_u32(vaddr) else {
+                    return false;
+                };
                 if i.rd() != 0 {
                     ctx.x[i.rd() as usize] = value as usize;
                 }
             }
-            _ => panic!("stval: {:#x}", ctx.sepc)
+            // PR #48 forwards unsupported Guest MMIO widths/instructions as
+            // the original page fault instead of panicking the Host.
+            _ => return false,
         }
+    } else {
+        return false;
     }
     // PR #43 selects the VM-local PLIC context rather than the globally unique
     // vCPU ID. Claim or VirtIO ACK can then deassert this vCPU's SEIP.
@@ -72,6 +78,7 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
         guest.clear_virtual_interrupt(VirtualInterrupt::External);
     }
     ctx.sepc += len;
+    true
 }
 
 /// 时钟中断处理函数
