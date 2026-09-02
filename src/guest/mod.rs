@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use crate::constants::csr::sie::{SEIE, STIE, SSIE, STIE_BIT};
 use crate::constants::csr::sip::SSIP;
 use crate::constants::csr::status::STATUS_SIE_BIT;
@@ -9,6 +11,7 @@ use crate::hypervisor::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
 use crate::device_emu::VirtDevice;
+use crate::identity::{VcpuId, VmId};
 
 
 pub mod switch;
@@ -26,13 +29,56 @@ pub use self::context::ShadowState;
 #[allow(unused_imports)]
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
 
-/// Guest Kernel 结构体
-pub struct GuestKernel<P: PageTable + PageDebug> {
+/// `feature/vm-vcpu-identities` makes a VM the ownership boundary for vCPUs.
+/// Guest memory and devices move to this level in later multi-Guest PRs once
+/// their interfaces no longer depend on vCPU-local state.
+pub struct VirtualMachine<P: PageTable + PageDebug> {
+    pub id: VmId,
+    vcpus: Vec<Vcpu<P>>,
+}
+
+impl<P> VirtualMachine<P>
+where
+    P: PageDebug + PageTable,
+{
+    pub fn new(id: VmId) -> Self {
+        Self {
+            id,
+            vcpus: Vec::new(),
+        }
+    }
+
+    pub fn add_vcpu(&mut self, vcpu: Vcpu<P>) {
+        assert_eq!(vcpu.vm_id, self.id, "vCPU belongs to a different VM");
+        assert!(
+            self.vcpus.iter().all(|existing| existing.id != vcpu.id),
+            "duplicate vCPU ID",
+        );
+        self.vcpus.push(vcpu);
+    }
+
+    pub fn vcpu(&self, id: VcpuId) -> Option<&Vcpu<P>> {
+        self.vcpus.iter().find(|vcpu| vcpu.id == id)
+    }
+
+    pub fn vcpu_mut(&mut self, id: VcpuId) -> Option<&mut Vcpu<P>> {
+        self.vcpus.iter_mut().find(|vcpu| vcpu.id == id)
+    }
+
+    pub fn vcpu_ids(&self) -> impl Iterator<Item = VcpuId> + '_ {
+        self.vcpus.iter().map(|vcpu| vcpu.id)
+    }
+}
+
+/// `feature/vm-vcpu-identities` keeps one virtual CPU's architectural state
+/// separate from both its owning VM and the physical hart that executes it.
+pub struct Vcpu<P: PageTable + PageDebug> {
     pub memory_set: MemorySet<P>,
     pub trap_cx_ppn: PhysPageNum,
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState<P>,
-    pub guest_id: usize,
+    pub vm_id: VmId,
+    pub id: VcpuId,
     /// PR #18 (fix-bug/smode-interrupt-forwarding): current virtual privilege mode.
     /// This is separate from sstatus.SPP, which records the mode before a trap.
     pub smode: bool,
@@ -40,8 +86,8 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
     pub virt_device: VirtDevice,
 }
 
-impl<P> GuestKernel<P> where P: PageDebug + PageTable {
-    pub fn new(memory_set: MemorySet<P>, guest_id: usize) -> Self {
+impl<P> Vcpu<P> where P: PageDebug + PageTable {
+    pub fn new(memory_set: MemorySet<P>, vm_id: VmId, id: VcpuId) -> Self {
         // 获取中断上下文的物理地址
         let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
         let trap_cx_ppn = memory_set
@@ -49,28 +95,29 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             .unwrap()
             .ppn();
         // 获取内核栈地址
-        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(guest_id);
+        let (kernel_stack_bottom, kernel_stack_top) = kernel_stack_position(id.index());
         // 将内核栈地址进行映射
         hypervisor_memory.insert_framed_area(
             kernel_stack_bottom.into(),
             kernel_stack_top.into(),
             MapPermission::R | MapPermission::W,
         );
-        let mut guest_kernel = Self { 
+        let mut vcpu = Self {
             memory_set,
             trap_cx_ppn,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
             shadow_state: ShadowState::new(),
-            guest_id,
+            vm_id,
+            id,
             smode: true,
-            virt_device: VirtDevice::new(guest_id), 
+            virt_device: VirtDevice::new(vm_id),
         };
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();
         sstatus.set_spp(riscv::register::sstatus::SPP::Supervisor);
-        guest_kernel.shadow_state.csrs.sstatus = sstatus.bits();
+        vcpu.shadow_state.csrs.sstatus = sstatus.bits();
         // 获取中断上下文的地址
-        let trap_cx : &mut TrapContext = guest_kernel.trap_cx_ppn.get_mut();
+        let trap_cx : &mut TrapContext = vcpu.trap_cx_ppn.get_mut();
         *trap_cx = TrapContext::app_init_context(
             GUEST_KERNEL_VIRT_START,
             0,
@@ -78,7 +125,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             kernel_stack_top,
             trap_handler as usize,
         );
-        guest_kernel
+        vcpu
     }
 
     /// PR #26 (`feature/shadow-page-table-asid`) selects the next guest token

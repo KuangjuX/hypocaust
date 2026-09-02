@@ -3,12 +3,12 @@ use riscv::register::stval;
 use crate::page_table::{PageTable,  PageTableEntry};
 use crate::debug::{PageDebug, print_guest_backtrace};
 use crate::device_emu::is_device_access;
-use crate::guest::{GuestKernel, PageTableRoot};
+use crate::guest::{Vcpu, PageTableRoot};
 use super::{ decode_instruction_at_address, handle_qemu_virt}; 
 
 use super::TrapContext;
 
-pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) -> bool {
+pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) -> bool {
     let shadow = guest.shadow();
     if shadow == PageTableRoot::GPA {
         hdebug!("Page fault without paging enabled?");

@@ -9,6 +9,7 @@ use core::ptr::{read_volatile, write_volatile};
 
 use crate::constants::layout::{GUEST_KERNEL_VIRT_END, GUEST_KERNEL_VIRT_START};
 use crate::guest::gpa2hpa;
+use crate::identity::VmId;
 use crate::mm::MemoryRegion;
 
 pub const MAX_QUEUES: usize = 4;
@@ -95,7 +96,7 @@ impl VirtIO {
         }
     }
 
-    pub fn write(&mut self, address: usize, value: u32, guest_id: usize) {
+    pub fn write(&mut self, address: usize, value: u32, vm_id: VmId) {
         let device = self.devices.iter_mut().find(|device| device.contains(address))
             .expect("virtio write outside registered device");
         match device {
@@ -124,7 +125,7 @@ impl VirtIO {
                         queue.host_pa = if queue.guest_pa == 0 {
                             0
                         } else {
-                            gpa2hpa(queue.guest_pa, guest_id)
+                            gpa2hpa(queue.guest_pa, vm_id)
                         };
                         queue.last_avail_idx = 0;
                         device_value = (queue.host_pa >> 12) as u32;
@@ -132,7 +133,7 @@ impl VirtIO {
                     VIRTIO_MMIO_QUEUE_NOTIFY => {
                         assert!((value as usize) < queues.len(), "virtio queue notification out of range");
                         let queue = &mut queues[value as usize];
-                        Self::translate_available(queue, guest_id);
+                        Self::translate_available(queue, vm_id);
                     },
                     VIRTIO_MMIO_STATUS if value == 0 => {
                         for queue in queues.iter_mut() {
@@ -150,7 +151,7 @@ impl VirtIO {
         }
     }
 
-    fn translate_available(queue: &mut Queue, guest_id: usize) {
+    fn translate_available(queue: &mut Queue, vm_id: VmId) {
         // Translate only newly published chains. Rewalking old entries could
         // translate an already-host address a second time.
         assert!(queue.host_pa != 0 && queue.size != 0, "virtio queue is not configured");
@@ -161,13 +162,13 @@ impl VirtIO {
             assert!(translated < queue.size, "virtio available ring advanced too far");
             let ring_slot = queue.last_avail_idx as usize % queue.size;
             let head = unsafe { read_volatile((avail + 4 + ring_slot * 2) as *const u16) };
-            Self::translate_chain(queue, head as usize, guest_id);
+            Self::translate_chain(queue, head as usize, vm_id);
             queue.last_avail_idx = queue.last_avail_idx.wrapping_add(1);
             translated += 1;
         }
     }
 
-    fn translate_chain(queue: &Queue, mut index: usize, guest_id: usize) {
+    fn translate_chain(queue: &Queue, mut index: usize, vm_id: VmId) {
         for _ in 0..queue.size {
             assert!(index < queue.size, "virtio descriptor index out of range");
             let descriptor = unsafe {
@@ -178,7 +179,7 @@ impl VirtIO {
                 guest_pa >= GUEST_KERNEL_VIRT_START && guest_pa < GUEST_KERNEL_VIRT_END,
                 "virtio descriptor address is outside guest RAM",
             );
-            unsafe { write_volatile(&mut descriptor.addr, gpa2hpa(guest_pa, guest_id) as u64) };
+            unsafe { write_volatile(&mut descriptor.addr, gpa2hpa(guest_pa, vm_id) as u64) };
             let flags = unsafe { read_volatile(&descriptor.flags) };
             if flags & VRING_DESC_F_NEXT == 0 {
                 return;

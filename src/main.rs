@@ -22,6 +22,7 @@ mod board;
 #[macro_use]
 mod console;
 mod constants;
+mod identity;
 mod lang_items;
 mod page_table;
 mod sbi;
@@ -36,8 +37,9 @@ mod hypervisor;
 
 
 use crate::constants::layout::PAGE_SIZE;
-use crate::guest::GuestKernel;
+use crate::guest::{Vcpu, VirtualMachine};
 use crate::hypervisor::HYPOCAUST;
+use crate::identity::{HartId, VcpuId, VmId};
 use crate::mm::MemorySet;
 
 // use fdt::Fdt;
@@ -90,11 +92,12 @@ fn clear_bss() {
 }
 
 #[no_mangle]
-pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
-    if hart_id == 0{
+pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
+    let hart_id = HartId::new(raw_hart_id);
+    if hart_id.is_boot() {
         clear_bss();
         hdebug!("Hello Hypocaust");
-        hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id, device_tree_blob);
+        hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id.index(), device_tree_blob);
         let meta = hypervisor::fdt::MachineMeta::parse(device_tree_blob);
         // 初始化堆及帧分配器
         hypervisor::hyp_alloc::heap_init();
@@ -114,11 +117,16 @@ pub fn hentry(hart_id: usize, device_tree_blob: usize) -> ! {
         timer::set_default_next_trigger();
         // 创建用户态的 guest kernel 内存空间
         let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-        let guest = GuestKernel::new(user_guest_kernel_memory, 0);
+        // `feature/vm-vcpu-identities` models VM ownership independently from
+        // the globally unique vCPU that happens to execute on this Host hart.
+        let vm_id = VmId::new(0);
+        let vcpu_id = VcpuId::new(0);
+        let mut vm = VirtualMachine::new(vm_id);
+        vm.add_vcpu(Vcpu::new(user_guest_kernel_memory, vm_id, vcpu_id));
         // 开始运行 guest kernel
-        hypervisor.add_guest(guest);
-        hypervisor.run_guest(0)
-    }else{
+        hypervisor.add_vm(vm);
+        hypervisor.run_vcpu(vm_id, vcpu_id)
+    } else {
         unreachable!()
     }
 }

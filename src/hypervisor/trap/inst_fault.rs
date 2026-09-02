@@ -11,12 +11,12 @@ use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
 use crate::sbi::{ console_putchar, set_timer, console_getchar, shutdown };
 use crate::guest::sbi::{ SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR, SBI_SET_TIMER, SBI_SHUTDOWN };
-use crate::guest::GuestKernel;
+use crate::guest::Vcpu;
 
 
 
 /// 处理特权级指令问题
-pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -147,7 +147,7 @@ fn write_register(ctx: &mut TrapContext, register: usize, value: usize) {
 }
 
 /// decode instruction from Guest OS address
-pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKernel<P>, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
+pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &Vcpu<P>, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
     let paddr = guest.translate_guest_vaddr(addr).unwrap();
     let i1 = unsafe{ core::ptr::read(paddr as *const u16) };
     let len = riscv_decode::instruction_length(i1);
