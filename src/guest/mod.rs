@@ -8,10 +8,12 @@ use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::page_table::{VirtAddr, PhysPageNum, PageTable};
 use crate::mm::{MemorySet, MapPermission};
 use crate::hypervisor::trap::{TrapContext, trap_handler};
-use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
+use crate::constants::layout::{
+    GUEST_KERNEL_VIRT_START, MAX_HOST_HARTS, TRAP_CONTEXT, kernel_stack_position,
+};
 use crate::constants::csr;
-use crate::device_emu::DeviceBus;
-use crate::identity::{VcpuId, VmId};
+use crate::device_emu::{DeviceBus, DeviceBusConfig};
+use crate::identity::{GuestHartId, VcpuId, VmId};
 
 
 pub mod switch;
@@ -32,6 +34,24 @@ pub use self::memory::GuestMemory;
 #[allow(unused_imports)]
 pub use self::pmap::{ShadowPageTables, PageTableRoot};
 
+/// PR #43 (`feature/vm-runtime-config`) collects the resources assigned to a
+/// VM so construction never selects a physical device backend implicitly.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VmConfig {
+    pub id: VmId,
+    pub device_bus: DeviceBusConfig,
+}
+
+impl VmConfig {
+    pub const fn new(id: VmId, device_bus: DeviceBusConfig) -> Self {
+        Self { id, device_bus }
+    }
+
+    pub const fn qemu_default() -> Self {
+        Self::new(VmId::new(0), DeviceBusConfig::qemu_default())
+    }
+}
+
 /// PR #34 (`feature/vm-vcpu-identities`) makes a VM the ownership boundary for vCPUs.
 /// PR #36 (`feature/vm-guest-memory`) moves Guest RAM here.
 /// PR #39 (`feature/per-vm-device-bus`) makes devices part of the same VM
@@ -47,7 +67,8 @@ impl<P> VirtualMachine<P>
 where
     P: PageDebug + PageTable,
 {
-    pub fn new(id: VmId) -> Self {
+    pub fn new(config: VmConfig) -> Self {
+        let id = config.id;
         let guest_memory = Arc::new(
             GuestMemory::for_vm(id).expect("VM has no Guest memory slot"),
         );
@@ -58,19 +79,37 @@ where
             guest_memory: Arc::clone(&guest_memory),
             // PR #39 (`feature/per-vm-device-bus`) gives every vCPU in this VM
             // one shared MMIO namespace and coherent device state.
-            device_bus: DeviceBus::new(id, guest_memory),
+            device_bus: DeviceBus::new(guest_memory, config.device_bus),
             vcpus: Vec::new(),
         }
     }
 
-    pub fn add_vcpu(&mut self, memory_set: MemorySet<P>, id: VcpuId) {
+    pub fn add_vcpu(
+        &mut self,
+        memory_set: MemorySet<P>,
+        id: VcpuId,
+        guest_hart_id: GuestHartId,
+    ) {
         assert!(
             self.vcpus.iter().all(|existing| existing.id != id),
             "duplicate vCPU ID",
         );
+        assert!(
+            self.vcpus
+                .iter()
+                .all(|existing| existing.guest_hart_id != guest_hart_id),
+            "duplicate Guest hart ID",
+        );
+        // PR #43 bounds the VM-local ID by the virtual PLIC's context capacity
+        // before any device completion attempts to address that context.
+        assert!(
+            guest_hart_id.index() < MAX_HOST_HARTS,
+            "Guest hart ID exceeds virtual PLIC capacity",
+        );
         self.vcpus.push(Vcpu::new(
             memory_set,
             id,
+            guest_hart_id,
             Arc::clone(&self.guest_memory),
         ));
     }
@@ -111,6 +150,9 @@ pub struct Vcpu<P: PageTable + PageDebug> {
     pub shadow_state: ShadowState<P>,
     pub vm_id: VmId,
     pub id: VcpuId,
+    /// PR #43 separates the VM-local architectural hart number from the global
+    /// ID used for scheduler registration and Host kernel-stack selection.
+    pub guest_hart_id: GuestHartId,
     /// PR #36 (`feature/vm-guest-memory`) shares the VM-owned immutable address
     /// translation capability without copying or reconstructing memory slots.
     pub guest_memory: Arc<GuestMemory>,
@@ -120,7 +162,12 @@ pub struct Vcpu<P: PageTable + PageDebug> {
 }
 
 impl<P> Vcpu<P> where P: PageDebug + PageTable {
-    fn new(memory_set: MemorySet<P>, id: VcpuId, guest_memory: Arc<GuestMemory>) -> Self {
+    fn new(
+        memory_set: MemorySet<P>,
+        id: VcpuId,
+        guest_hart_id: GuestHartId,
+        guest_memory: Arc<GuestMemory>,
+    ) -> Self {
         let vm_id = guest_memory.vm_id();
         // 获取中断上下文的物理地址
         let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
@@ -143,6 +190,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             shadow_state: ShadowState::new(),
             vm_id,
             id,
+            guest_hart_id,
             guest_memory,
             smode: true,
         };
@@ -159,6 +207,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             kernel_stack_top,
             trap_handler as usize,
         );
+        // PR #43 passes the VM-local hart identity through the standard RISC-V
+        // boot ABI. Multiple VMs may therefore each boot a hart numbered zero.
+        trap_cx.x[10] = guest_hart_id.index();
         vcpu
     }
 
