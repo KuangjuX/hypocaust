@@ -12,6 +12,17 @@ use crate::timer::get_time;
 use super::TrapContext;
 use super::decode_instruction_at_address;
 
+/// PR #17 (fix-bug/virtio-dma-translation): reconstruct the faulting MMIO address
+/// using the sign-extended 12-bit load/store immediate.
+fn instruction_address(base: usize, immediate: u32) -> usize {
+    let offset = ((immediate << 20) as i32 >> 20) as isize;
+    (base as isize + offset) as usize
+}
+
+/// Return the architectural value of a source register, including hardwired x0.
+fn register_value(ctx: &TrapContext, register: usize) -> usize {
+    if register == 0 { 0 } else { ctx.x[register] }
+}
 
 pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
@@ -20,10 +31,27 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ct
             riscv_decode::Instruction::Sw(i) => {
                 let rs1 = i.rs1() as usize;
                 let rs2 = i.rs2() as usize;
-                let offset: isize = if i.imm() > 2048 { ((0b1111 << 12) | i.imm()) as i16 as isize }else{  i.imm() as isize };
-                let vaddr = (ctx.x[rs1] as isize + offset) as usize; 
-                let value = ctx.x[rs2];
-                guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
+                let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
+                let value = register_value(ctx, rs2);
+                if crate::device_emu::is_device_access(vaddr) {
+                    guest.virt_device.virtio.write(vaddr, value as u32, guest.guest_id);
+                }else{
+                    guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
+                }
+            },
+            riscv_decode::Instruction::Lw(i) => {
+                let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
+                let value = guest.virt_device.virtio.read(vaddr);
+                if i.rd() != 0 {
+                    ctx.x[i.rd() as usize] = value as i32 as isize as usize;
+                }
+            },
+            riscv_decode::Instruction::Lwu(i) => {
+                let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
+                let value = guest.virt_device.virtio.read(vaddr);
+                if i.rd() != 0 {
+                    ctx.x[i.rd() as usize] = value as usize;
+                }
             }
             _ => panic!("stval: {:#x}", ctx.sepc)
         }
@@ -54,4 +82,3 @@ pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P
 pub fn is_device_access(guest_pa: usize) -> bool {
     guest_pa >= 0x1000_1000 && guest_pa < 0x1000_1000 + 1000
 }
-

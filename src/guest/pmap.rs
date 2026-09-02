@@ -254,7 +254,9 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
                     if !is_device_access(guest_pte.ppn().0 << 12) {
                         host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags() | PTEFlags::U);
                     }else{
-                        host_pte = PageTableEntry::new(PhysPageNum::from(guest_pte.ppn().0) , guest_pte.flags() | PTEFlags::U);
+                        // PR #17 (fix-bug/virtio-dma-translation): leave passthrough
+                        // devices unmapped so MMIO traps before reaching QEMU.
+                        host_pte = PageTableEntry::empty();
                     }
                     host_ptes[index] = host_pte;
                 }
@@ -352,7 +354,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
                     self.shadow_state.shadow_page_tables.guest_satp = Some(satp);
 
-                    assert_eq!(spt.translate(VirtPageNum::from(0x10001)).unwrap().ppn().0, 0x10001);
+                    assert!(!spt.translate(VirtPageNum::from(0x10001)).unwrap().is_valid());
                 }
                 PageTableRoot::UVA => {
                     // 将 mode 设置为 `UVA`
@@ -487,4 +489,3 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     }
 
 }
-
