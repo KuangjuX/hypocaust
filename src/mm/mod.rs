@@ -9,7 +9,9 @@ use crate::hypervisor::HYPERVISOR_MEMORY;
 use crate::page_table::PageTableSv39;
 
 pub fn vm_init(guest_kernel_memory: &MemorySet<PageTableSv39>) {
-    let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
-    hypervisor_memory.hyper_load_guest_kernel(guest_kernel_memory);
-    hypervisor_memory.activate();
+    // PR #44 (`fix-bug/map-guest-ram-before-load`) maps and activates the VM's
+    // complete RAM slot before `new_guest_kernel` copies the ELF. Keep this
+    // compatibility entry point, but do not remap the same Host pages here.
+    let _ = guest_kernel_memory;
+    HYPERVISOR_MEMORY.exclusive_access().activate();
 }
