@@ -31,13 +31,21 @@ pub enum PageTableRoot {
     UVA
 }
 
+struct CachedShadowPageTable<P: PageTable + PageDebug> {
+    page_table: P,
+    synchronized_generation: usize,
+}
+
 pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// all shadow page tables (satp, spt)
-    pub spts: UnsafeCell<BTreeMap<usize, P>>,
+    spts: UnsafeCell<BTreeMap<usize, CachedShadowPageTable<P>>>,
     /// guest kernel installed shadow page table
     pub page_tables: [Option<usize>; 3],
     /// kernel guest page table token
-    pub guest_satp: Option<usize>
+    pub guest_satp: Option<usize>,
+    /// `feature/cache-shadow-page-table-state` increments this generation for
+    /// every trapped guest PTE write so cached roots can detect stale state.
+    pte_generation: usize,
 }
 
 impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
@@ -45,29 +53,49 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         Self {
             spts: UnsafeCell::new(BTreeMap::new()),
             page_tables: [None; 3],
-            guest_satp: None
+            guest_satp: None,
+            pte_generation: 0,
         }
     }
 
-    pub fn spts(&self) -> &mut BTreeMap<usize, P> {
+    fn spts(&self) -> &mut BTreeMap<usize, CachedShadowPageTable<P>> {
         unsafe{ &mut *self.spts.get() }
     }
 
     pub fn push(&self, satp: usize, spt: P) {
         let inner = self.spts();
-        inner.insert(satp, spt);
+        inner.insert(satp, CachedShadowPageTable {
+            page_table: spt,
+            synchronized_generation: self.pte_generation,
+        });
     }
 
 
     pub fn shadow_page_table(&self, satp: usize) -> Option<&mut P> {
         let inner = self.spts();
-        inner.get_mut(&satp)
+        inner.get_mut(&satp).map(|cached| &mut cached.page_table)
+    }
+
+    pub fn requires_resynchronization(&self, satp: usize) -> Option<bool> {
+        let inner = self.spts();
+        inner.get(&satp).map(|cached| {
+            cached.synchronized_generation != self.pte_generation
+        })
+    }
+
+    pub fn mark_synchronized(&self, satp: usize) {
+        let generation = self.pte_generation;
+        self.spts().get_mut(&satp).unwrap().synchronized_generation = generation;
+    }
+
+    pub fn record_pte_write(&mut self) {
+        self.pte_generation = self.pte_generation.wrapping_add(1);
     }
 
     pub fn guest_page_table(&self) -> Option<&mut P> {
         let inner = self.spts();
         if let Some(guest_satp) = self.guest_satp {
-            inner.get_mut(&guest_satp)
+            inner.get_mut(&guest_satp).map(|cached| &mut cached.page_table)
         }else{
             None
         }
@@ -348,23 +376,22 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let mut full_walks = 0;
         let mut walked_page_table_pages = 0;
         let update;
-        // 根据 satp 获取 guest kernel 根页表的物理地址
         let hart_id = self.guest_id;
+        // Preserve the original mode classification on every switch. A guest
+        // may reuse a root PPN, so only synchronization state is cached.
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
         let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
         let gpt = P::from_ppn(root_hppn);
-
-        let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
-        if self.shadow_state.shadow_page_tables.shadow_page_table(satp).is_none() {
+        let mode = page_table_mode(gpt, hart_id);
+        let requires_resynchronization = self.shadow_state.shadow_page_tables
+            .requires_resynchronization(satp);
+        if requires_resynchronization.is_none() {
             update = ShadowPageTableUpdate::New;
             // 如果影子页表中没有发现，新建影子页表
             let mut spt;
-            let mode;
             // 根据页表是否可读内核地址空间判断是 `GVA` 还是 `UVA`
-            match page_table_mode(gpt.clone(), hart_id) {
+            match mode {
                 PageTableRoot::GVA => {
-                    // 将 mode 设置为 `GVA`
-                    mode = PageTableRoot::GVA;
                     let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
                     spt = initialized.0;
                     walked_page_table_pages += initialized.1;
@@ -374,8 +401,6 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     assert!(!spt.translate(VirtPageNum::from(0x10001)).unwrap().is_valid());
                 }
                 PageTableRoot::UVA => {
-                    // 将 mode 设置为 `UVA`
-                    mode = PageTableRoot::UVA;
                     // 同步 guest spt,即将用户页表设置为只读
                     let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();   
                     let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, Some(guest_spt)).unwrap();
@@ -389,6 +414,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
             // 为 `SPT` 映射跳板页
             // 无论是 guest spt 还是 user spt 都要映射跳板页与 Trap Context
+            let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
             let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
             spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
 
@@ -400,57 +426,66 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             self.shadow_state.shadow_page_tables.install_root(spt.token(), mode);
             self.shadow_state.shadow_page_tables.push(satp, spt);
         }else{
-            // 如果存在的话，根据 `guest page table` 更新 `guest os SPT` 只读项
-            let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-            match page_table_mode(gpt.clone(), hart_id) {
+            let requires_resynchronization = requires_resynchronization.unwrap();
+            match mode {
                 PageTableRoot::GVA => {
                     update = ShadowPageTableUpdate::CachedKernel;
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
                     self.shadow_state.conseutive_satp_switch_count += 1;
-                    // 切换的页表为 `guest os page table`
-                    // 需要重新遍历所有页表项，并将其设置为只读
-                    let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                    walked_page_table_pages += page_table_vpns.len();
-                    full_walks += 1;
-                    page_table_vpns.iter().for_each(|&vpn| {
-                        update_pte_readonly(vpn, guest_spt);
-                    });
+                    if requires_resynchronization {
+                        // `feature/cache-shadow-page-table-state` only revisits
+                        // cached page-table pages after a guest PTE was written.
+                        let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
+                        let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                        walked_page_table_pages += page_table_vpns.len();
+                        full_walks += 1;
+                        page_table_vpns.iter().for_each(|&vpn| {
+                            update_pte_readonly(vpn, guest_spt);
+                        });
+                        self.shadow_state.shadow_page_tables.mark_synchronized(satp);
+                    }
                 },
                 PageTableRoot::UVA => {
                     update = ShadowPageTableUpdate::CachedUser;
-                    let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
-                    walked_page_table_pages += page_table_vpns.len();
-                    full_walks += 1;
-                    page_table_vpns.iter().for_each(|&vpn| {
-                        update_pte_readonly(vpn, guest_spt);
-                    });
-                    // 需要更新用户态页表
-                    walked_page_table_pages += synchronize_page_table::<P>(hart_id, satp);
-                    full_walks += 1;
-                    let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
-                    // 为 `SPT` 映射跳板页
-                    let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-                    if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
-                        if !pte.is_valid() {
+                    if requires_resynchronization {
+                        let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
+                        let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                        walked_page_table_pages += page_table_vpns.len();
+                        full_walks += 1;
+                        page_table_vpns.iter().for_each(|&vpn| {
+                            update_pte_readonly(vpn, guest_spt);
+                        });
+                        // 需要更新用户态页表
+                        walked_page_table_pages += synchronize_page_table::<P>(hart_id, satp);
+                        full_walks += 1;
+                        let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
+                        let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
+                        // 为 `SPT` 映射跳板页
+                        let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
+                        if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
+                            if !pte.is_valid() {
+                                htracking!("user remap trampoline");
+                                spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
+                            }
+                        }else{
                             htracking!("user remap trampoline");
                             spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
                         }
-                    }else{
-                        htracking!("user remap trampoline");
-                        spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-                    }
-                        
-                    let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                    let trapctx_hppn = hypervisor_memory.translate(trapctx_hvpn).unwrap().ppn();
-                    if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
-                        if !pte.is_valid() {
+
+                        let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
+                        let trapctx_hppn = hypervisor_memory.translate(trapctx_hvpn).unwrap().ppn();
+                        if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
+                            if !pte.is_valid() {
+                                htracking!("user remap trap context");
+                                spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+                            }
+                        }else{
                             htracking!("user remap trap context");
                             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
                         }
-                    }else{
-                        htracking!("user remap trap context");
-                        spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+                        self.shadow_state.shadow_page_tables.mark_synchronized(satp);
                     }
+                    let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
                     self.shadow_state.shadow_page_tables.install_root(spt.token(), PageTableRoot::UVA);
                 },
                 _ => unreachable!()
@@ -524,6 +559,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 }
             }
         }
+        // `feature/cache-shadow-page-table-state` invalidates every cached
+        // root conservatively; each root resynchronizes at most once per write.
+        self.shadow_state.shadow_page_tables.record_pte_write();
         // PR #24 (`feature/shadow-paging-profile`) distinguishes incremental
         // updates from the 512-entry scan performed when a PTE is invalidated.
         self.shadow_state.shadow_paging_stats.record_pte_update(invalidation_scan);
