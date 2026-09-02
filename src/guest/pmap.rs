@@ -540,7 +540,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                     self.shadow_state.shadow_page_tables.record_page_table_pages(&initialized.1);
                     self.shadow_state.shadow_page_tables.guest_satp = Some(satp);
 
-                    assert!(!spt.translate(VirtPageNum::from(0x10001)).unwrap().is_valid());
+                    // PR #46 (`fix-bug/invalid-leaf-translation`) exposes the
+                    // intentionally trapped VirtIO page as an absent mapping.
+                    assert!(spt.translate(VirtPageNum::from(0x10001)).is_none());
                 }
                 PageTableRoot::UVA => {
                     // 同步 guest spt,即将用户页表设置为只读

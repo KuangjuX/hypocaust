@@ -554,11 +554,9 @@ pub fn map_host_mmio(start: usize, size: usize) {
     let mut host_memory = HYPERVISOR_MEMORY.exclusive_access();
     for address in (start..end).step_by(PAGE_SIZE) {
         let vpn = VirtAddr::from(address).floor();
-        if host_memory
-            .page_table
-            .translate(vpn)
-            .is_some_and(|pte| pte.is_valid())
-        {
+        // PR #46 makes `Some` mean a valid leaf, so this is now a sound
+        // already-mapped test rather than a check for allocated page tables.
+        if host_memory.page_table.translate(vpn).is_some() {
             continue;
         }
         // Device registers are data and must never become executable in the
