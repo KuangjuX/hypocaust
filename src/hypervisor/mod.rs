@@ -53,9 +53,11 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
         self.guests.push(guest);
     }
 
-    pub fn current_user_token(&self) -> usize {
-        let guest = &self.guests[self.guest_run_id];
-        guest.get_user_token()
+    /// PR #26 (`feature/shadow-page-table-asid`) returns both the selected
+    /// shadow token and an optional destination ASID that must be fenced.
+    pub fn prepare_current_user_token(&mut self) -> (usize, Option<usize>) {
+        let guest = &mut self.guests[self.guest_run_id];
+        guest.prepare_user_token()
     }
 
     pub fn current_trap_cx(&mut self) -> &'static mut TrapContext {
