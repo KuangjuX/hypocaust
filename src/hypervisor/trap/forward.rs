@@ -49,7 +49,7 @@ pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     state.csrs.scause = scause::read().code();
     state.csrs.sepc = ctx.sepc;
     state.csrs.stval = stval::read();
-    // PR fix-bug/exception-entry-interrupt-state: emulate the architectural
+    // PR #20 (fix-bug/exception-entry-interrupt-state): emulate the architectural
     // trap-entry SIE -> SPIE transition before guest S-mode code can be interrupted.
     state.push_sie();
     // PR #18 (fix-bug/smode-interrupt-forwarding): preserve the pre-trap virtual
