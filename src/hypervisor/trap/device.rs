@@ -1,11 +1,10 @@
 use riscv::addr::BitField;
 
 use crate::constants::csr::sie::STIE_BIT;
-use crate::constants::csr::sip::STIP_BIT;
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
 use crate::device_emu::DeviceBus;
-use crate::guest::Vcpu;
+use crate::guest::{Vcpu, VirtualInterrupt};
 use crate::sbi::set_timer;
 use crate::timer::get_default_timer;
 use crate::timer::get_time;
@@ -74,10 +73,9 @@ pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>) {
     let mut next = time + get_default_timer();
     if guest.shadow_state.csrs.sie.get_bit(STIE_BIT) {
         if guest.shadow_state.csrs.mtimecmp <= time {
-            // 表明此时 Guest OS 发生中断
-            guest.shadow_state.interrupt = true;
-            // 设置 sip 寄存器
-            guest.shadow_state.csrs.sip.set_bit(STIP_BIT, true);
+            // PR #40 queues the timer interrupt only on this vCPU. Delivery is
+            // arbitrated immediately before the next Guest entry.
+            guest.inject_virtual_interrupt(VirtualInterrupt::Timer);
         }else{
             // 未发生中断，设置下次中断
             next = next.min(guest.shadow_state.csrs.mtimecmp)

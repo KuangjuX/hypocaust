@@ -67,6 +67,12 @@ pub fn enable_timer_interrupt() {
     unsafe { sie::set_stimer(); }
 }
 
+/// PR #40 enables Host scheduler/IPI events on every online hart, including
+/// while that hart is executing Guest code.
+pub fn enable_software_interrupt() {
+    unsafe { asm!("csrsi sie, 2") };
+}
+
 pub fn disable_timer_interrupt() {
     unsafe{ sie::clear_stimer(); }
 }
@@ -112,15 +118,13 @@ pub fn trap_handler() -> ! {
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             handle_time_interrupt(guest);
-            // 可能转发中断
-            maybe_forward_interrupt(guest, ctx);
             true
         },
         Trap::Interrupt(Interrupt::SupervisorSoft) => {
-            // PR #38 (`feature/multivcpu-scheduler`) treats SBI IPIs as Host
-            // scheduling events; virtual SSIP remains in the shadow CSR state.
+            // PR #40 uses this Host IPI to make the current vCPU re-arbitrate
+            // its own virtual pending bits; it is not itself a Guest SSIP.
             unsafe { asm!("csrci sip, 2") };
-            true
+            false
         },
         _ => {  
             panic!(
@@ -150,10 +154,11 @@ pub fn trap_return() -> ! {
     let trap_cx_ptr = TRAP_CONTEXT;
     let (user_satp, flush_asid) = {
         let mut hypervisor_guard = HYPOCAUST.lock();
-        hypervisor_guard
-            .as_mut()
-            .unwrap()
-            .prepare_current_user_token(hart_id)
+        let hypervisor = hypervisor_guard.as_mut().unwrap();
+        // PR #40 arbitrates pending interrupts for whichever vCPU the
+        // scheduler selected, closing IPI-versus-preemption races.
+        maybe_forward_interrupt(hypervisor.current_vcpu(hart_id));
+        hypervisor.prepare_current_user_token(hart_id)
     };
     if let Some(asid) = flush_asid {
         // PR #26 (`feature/shadow-page-table-asid`) flushes only a dirty

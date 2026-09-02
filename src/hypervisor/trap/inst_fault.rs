@@ -6,12 +6,11 @@ use riscv::register::scause;
 use super::TrapContext;
 use super::forward_exception;
 use crate::debug::PageDebug;
-use crate::constants::csr::sip::STIP_BIT;
 use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
 use crate::sbi::{ console_putchar, set_timer, console_getchar, shutdown };
 use crate::guest::sbi::{ SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR, SBI_SET_TIMER, SBI_SHUTDOWN };
-use crate::guest::Vcpu;
+use crate::guest::{Vcpu, VirtualInterrupt};
 
 
 
@@ -32,7 +31,9 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                         let stime = ctx.x[10];
                         guest.shadow_state.csrs.mtimecmp = stime;
                         set_timer(stime);
-                        guest.shadow_state.csrs.sip.set_bit(STIP_BIT, false);
+                        // PR #40 deasserts only this vCPU's virtual timer when
+                        // the Guest programs a new deadline.
+                        guest.clear_virtual_interrupt(VirtualInterrupt::Timer);
                     }
                     SBI_CONSOLE_PUTCHAR => {
                         let c = ctx.x[10];
@@ -108,9 +109,6 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                 ctx.sepc = guest.get_csr(crate::constants::csr::sepc);
                 guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
                 guest.smode = return_to_smode;
-                if !return_to_smode {
-                    guest.shadow_state.interrupt = true;
-                }
                 // hdebug!("sret: spec -> {:#x}", ctx.sepc);
                 return;
             }
@@ -158,5 +156,4 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &Vcpu<P>, 
     };
     (len, riscv_decode::decode(inst).ok())
 }
-
 
