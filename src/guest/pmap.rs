@@ -9,6 +9,7 @@ use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTE
 use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT};
 
 use super::GuestKernel;
+use super::shadow_stats::ShadowPageTableUpdate;
 
 /// 内存信息，用于帮助做地址映射
 #[allow(unused)]
@@ -171,7 +172,7 @@ pub fn collect_page_table_vpns<P: PageTable>(hart_id: usize, satp: usize) -> Vec
     
 }
 
-pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) {
+pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) -> usize {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
 
     // 遍历所有页表项
@@ -179,12 +180,14 @@ pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) {
     let mut buffer = Vec::new();
     let vpn = VirtPageNum::from(guest_root_pa >> 12);
     queue.push_back(vpn);
+    let mut walked_page_table_pages = 0;
 
     for walk in 0..3 {
         // 遍历三级页表
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
+            walked_page_table_pages += 1;
             // 收集所有非叶子节点 `vpn`，用于设置为只读
             let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, hart_id) >> 12);
             // 获得 guest pte 的物理页号
@@ -210,10 +213,11 @@ pub fn synchronize_page_table<P: PageTable>(hart_id: usize, satp: usize) {
             queue.push_back(buffer.pop().unwrap());
         }
     }
+    walked_page_table_pages
 }
 
 /// 用于初始化影子页表同步所有页表项(仅在最开始时使用)
-pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, mode: PageTableRoot, guest_spt: Option<&mut P>) -> Option<P> {
+pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, mode: PageTableRoot, guest_spt: Option<&mut P>) -> Option<(P, usize)> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
     let host_root_pa = gpt2spt(guest_root_pa, hart_id);
     // 获取 `guest SPT`
@@ -280,7 +284,8 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
             _ => unreachable!()
         }
     });
-    Some(host_shadow_page_table)
+    let walked_page_table_pages = non_leaf_vpns.len();
+    Some((host_shadow_page_table, walked_page_table_pages))
 }
 
 
@@ -337,6 +342,12 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
     pub fn make_shadow_page_table(&mut self, satp: usize) {
+        // PR #24 (`feature/shadow-paging-profile`) measures the complete shadow
+        // update, including cache lookup, walks, and special-page mappings.
+        let start_cycles = read_cycle();
+        let mut full_walks = 0;
+        let mut walked_page_table_pages = 0;
+        let update;
         // 根据 satp 获取 guest kernel 根页表的物理地址
         let hart_id = self.guest_id;
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
@@ -345,6 +356,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
 
         let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
         if self.shadow_state.shadow_page_tables.shadow_page_table(satp).is_none() {
+            update = ShadowPageTableUpdate::New;
             // 如果影子页表中没有发现，新建影子页表
             let mut spt;
             let mode;
@@ -353,7 +365,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 PageTableRoot::GVA => {
                     // 将 mode 设置为 `GVA`
                     mode = PageTableRoot::GVA;
-                    spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
+                    let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, None).unwrap();
+                    spt = initialized.0;
+                    walked_page_table_pages += initialized.1;
+                    full_walks += 1;
                     self.shadow_state.shadow_page_tables.guest_satp = Some(satp);
 
                     assert!(!spt.translate(VirtPageNum::from(0x10001)).unwrap().is_valid());
@@ -363,7 +378,10 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     mode = PageTableRoot::UVA;
                     // 同步 guest spt,即将用户页表设置为只读
                     let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();   
-                    spt = initialize_shadow_page_table::<P>(hart_id, satp, mode, Some(guest_spt)).unwrap();              
+                    let initialized = initialize_shadow_page_table::<P>(hart_id, satp, mode, Some(guest_spt)).unwrap();
+                    spt = initialized.0;
+                    walked_page_table_pages += initialized.1;
+                    full_walks += 1;
                     
                 }
                 _ => unreachable!()
@@ -386,20 +404,29 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
             match page_table_mode(gpt.clone(), hart_id) {
                 PageTableRoot::GVA => {
+                    update = ShadowPageTableUpdate::CachedKernel;
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
                     self.shadow_state.conseutive_satp_switch_count += 1;
                     // 切换的页表为 `guest os page table`
                     // 需要重新遍历所有页表项，并将其设置为只读
-                    collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
+                    let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                    walked_page_table_pages += page_table_vpns.len();
+                    full_walks += 1;
+                    page_table_vpns.iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
                 },
                 PageTableRoot::UVA => {
-                    collect_page_table_vpns::<P>(hart_id, satp).iter().for_each(|&vpn| {
+                    update = ShadowPageTableUpdate::CachedUser;
+                    let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
+                    walked_page_table_pages += page_table_vpns.len();
+                    full_walks += 1;
+                    page_table_vpns.iter().for_each(|&vpn| {
                         update_pte_readonly(vpn, guest_spt);
                     });
                     // 需要更新用户态页表
-                    synchronize_page_table::<P>(hart_id, satp);
+                    walked_page_table_pages += synchronize_page_table::<P>(hart_id, satp);
+                    full_walks += 1;
                     let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
                     // 为 `SPT` 映射跳板页
                     let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
@@ -429,6 +456,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 _ => unreachable!()
             }
         }
+        let elapsed_cycles = read_cycle().wrapping_sub(start_cycles);
+        self.shadow_state.shadow_paging_stats.record_satp_update(
+            update,
+            full_walks,
+            walked_page_table_pages,
+            elapsed_cycles,
+        );
     }
 
 
@@ -440,15 +474,18 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let host_ppn = PhysPageNum::from(host_pa >> 12);
         // 获得影子页表
         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
+        let invalidation_scan;
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
         }else if va % core::mem::size_of::<PageTableEntry>() == 0 && !pte.is_valid() {
+            invalidation_scan = true;
             // PR #21 (fix-bug/invalid-pte-synchronization): mirror every V=0 encoding,
             // including allocator metadata, and release pages with no valid PTEs.
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
             // 消除页表映射，将页表内存修改为可读可写
             clear_page_table(guest_spt, va, hart_id);
         }else {
+            invalidation_scan = false;
             // 如果页表项对齐且物理页号不为零表示进行页表映射
             let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
             let pte_array = host_ppn.get_pte_array();
@@ -487,6 +524,18 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 }
             }
         }
+        // PR #24 (`feature/shadow-paging-profile`) distinguishes incremental
+        // updates from the 512-entry scan performed when a PTE is invalidated.
+        self.shadow_state.shadow_paging_stats.record_pte_update(invalidation_scan);
     }
 
+}
+
+#[inline]
+fn read_cycle() -> usize {
+    let cycles: usize;
+    unsafe {
+        core::arch::asm!("rdcycle {}", out(reg) cycles);
+    }
+    cycles
 }

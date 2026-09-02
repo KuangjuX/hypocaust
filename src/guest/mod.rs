@@ -14,6 +14,7 @@ use crate::device_emu::VirtDevice;
 pub mod switch;
 pub mod context;
 mod pmap;
+mod shadow_stats;
 pub mod sbi;
 
 use context::TaskContext;
