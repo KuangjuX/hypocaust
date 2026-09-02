@@ -18,6 +18,9 @@ pub struct TrapContext {
     pub kernel_sp: usize,
     /// Addr of trap_handler function
     pub trap_handler: usize,
+    /// PR #38 (`feature/multivcpu-scheduler`) tells trap entry which Host hart
+    /// is running this vCPU after the Guest's own `tp` value has been saved.
+    pub host_hart_id: usize,
 }
 
 impl TrapContext {
@@ -42,10 +45,10 @@ impl TrapContext {
             kernel_satp,  // addr of page table
             kernel_sp,    // kernel stack
             trap_handler, // addr of trap_handler function
+            host_hart_id: 0,
         };
         cx.set_sp(sp); // app's user stack pointer
         cx // return initial Trap Context of app
     }
 }
-
 

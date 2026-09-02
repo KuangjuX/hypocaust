@@ -38,7 +38,7 @@ mod hypervisor;
 
 use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
 use crate::guest::VirtualMachine;
-use crate::hypervisor::HYPOCAUST;
+use crate::hypervisor::{HYPOCAUST, HYPERVISOR_MEMORY};
 use crate::identity::{HartId, VcpuId, VmId};
 use crate::mm::MemorySet;
 
@@ -71,6 +71,8 @@ pub unsafe extern "C" fn start() -> ! {
         // Reject an out-of-range hart before calculating a stack pointer.
         "li t4, {max_host_harts}",
         "bgeu a0, t4, 2f",
+        // PR #38 keeps the Host hart ID in tp while Hypocaust code runs.
+        "mv tp, a0",
         // prepare stack
         "la sp, {boot_stack}",
         "li t2, {hart_boot_stack_size}",
@@ -109,42 +111,45 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         hdebug!("Hello Hypocaust");
         hdebug!("hart_id: {}, device tree blob: {:#x}", hart_id.index(), device_tree_blob);
         let meta = hypervisor::fdt::MachineMeta::parse(device_tree_blob);
+        let hart_count = meta.hart_count.min(MAX_HOST_HARTS);
         // 初始化堆及帧分配器
         hypervisor::hyp_alloc::heap_init();
         hypervisor::initialize_vmm(meta);
-        let mut hypervisor = HYPOCAUST.lock();
-        let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-        let vm_id = VmId::new(0);
-        let vcpu_id = VcpuId::new(0);
-        let mut vm = VirtualMachine::new(vm_id);
-        // PR #36 (`feature/vm-guest-memory`) creates the VM-owned RAM slot
-        // before loading the Guest so every mapping uses the same capability.
-        let guest_kernel_memory =
-            MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
-        // 初始化虚拟内存
-        mm::vm_init(&guest_kernel_memory);
-        hypervisor::trap::init();
-        // 测试重映射
-        mm::remap_test();
-        // 测试 guest kernel 内存映射
-        mm::guest_kernel_test(vm.guest_memory());
-        // 开启时钟中断
-        hypervisor::trap::enable_timer_interrupt();
-        timer::set_default_next_trigger();
-        // 创建用户态的 guest kernel 内存空间
-        let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-        // PR #34 (`feature/vm-vcpu-identities`) models VM ownership independently from
-        // the globally unique vCPU that happens to execute on this Host hart.
-        vm.add_vcpu(user_guest_kernel_memory, vcpu_id);
-        // 开始运行 guest kernel
-        hypervisor.add_vm(vm);
-        hypervisor.run_vcpu(vm_id, vcpu_id)
-    } else {
-        // PR #37 (`fix-bug/per-hart-boot-stacks`) keeps firmware-started
-        // secondary harts on their own valid stack until scheduling is added.
-        hdebug!("park secondary hart {}", hart_id.index());
-        loop {
-            unsafe { core::arch::asm!("wfi") };
+        {
+            let mut hypervisor = HYPOCAUST.lock();
+            let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
+            let vm_id = VmId::new(0);
+            let vcpu_id = VcpuId::new(0);
+            let mut vm = VirtualMachine::new(vm_id);
+            // PR #36 (`feature/vm-guest-memory`) creates the VM-owned RAM slot
+            // before loading the Guest so every mapping uses the same capability.
+            let guest_kernel_memory =
+                MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
+            // 初始化虚拟内存
+            mm::vm_init(&guest_kernel_memory);
+            hypervisor::trap::init();
+            // 测试重映射
+            mm::remap_test();
+            // 测试 guest kernel 内存映射
+            mm::guest_kernel_test(vm.guest_memory());
+            // 创建用户态的 guest kernel 内存空间
+            let user_guest_kernel_memory =
+                MemorySet::create_user_guest_kernel(&guest_kernel_memory);
+            vm.add_vcpu(user_guest_kernel_memory, vcpu_id);
+            hypervisor.add_vm(vm);
         }
+        // PR #38 (`feature/multivcpu-scheduler`) starts secondary Host harts
+        // only after VM construction and Host mappings are globally visible.
+        for index in 1..hart_count {
+            sbi::start_hart(HartId::new(index), start as usize, device_tree_blob);
+        }
+        hypervisor::run_scheduler(hart_id)
+    } else {
+        // PR #38 installs the shared Host page table on each SBI-started hart
+        // before the hart enters its independent scheduler loop.
+        HYPERVISOR_MEMORY.exclusive_access().activate();
+        hypervisor::trap::init();
+        hdebug!("scheduler online on hart {}", hart_id.index());
+        hypervisor::run_scheduler(hart_id)
     }
 }

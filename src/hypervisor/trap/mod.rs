@@ -20,6 +20,7 @@ mod forward;
 use crate::constants::layout::{TRAMPOLINE, TRAP_CONTEXT};
 use crate::debug::print_hypervisor_backtrace;
 use crate::hypervisor::HYPOCAUST;
+use crate::identity::HartId;
 
 use core::arch::{asm, global_asm};
 use riscv::register::{
@@ -75,23 +76,25 @@ pub fn disable_timer_interrupt() {
 /// handle an interrupt, exception, or system call from user space
 pub fn trap_handler() -> ! {
     set_kernel_trap_entry();
-    unsafe{ HYPOCAUST.force_unlock(); }
-    let mut hypervisor = HYPOCAUST.lock();
-    let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-    let ctx = hypervisor.current_trap_cx();
+    let hart_id = HartId::current();
+    let mut hypervisor_guard = HYPOCAUST.lock();
+    let hypervisor = {&mut *hypervisor_guard}.as_mut().unwrap();
+    let ctx = hypervisor.current_trap_cx(hart_id);
     let scause = scause::read();
     let stval = stval::read();
     // get guest kernel
-    let guest = hypervisor.current_vcpu();
+    let guest = hypervisor.current_vcpu(hart_id);
     // PR #24 (`feature/shadow-paging-profile`) counts every transition from
     // the deprivileged guest into Hypocaust to correlate traps with paging work.
     guest.shadow_state.shadow_paging_stats.record_trap();
-    match scause.cause() {
+    let preempt = match scause.cause() {
         Trap::Exception(Exception::UserEnvCall) => {
             ifault(guest, ctx);
+            false
         },
         Trap::Exception(Exception::Breakpoint) => { 
             ifault(guest, ctx);
+            false
         }
         // PR #17 (fix-bug/virtio-dma-translation): VirtIO reads fault by
         // design and must enter the same MMIO emulator as register writes.
@@ -101,14 +104,23 @@ pub fn trap_handler() -> ! {
                 htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
                 forward_exception(guest, ctx);
             }
+            false
         }
         Trap::Exception(Exception::IllegalInstruction) => {
             ifault(guest, ctx);
+            false
         }
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             handle_time_interrupt(guest);
             // 可能转发中断
             maybe_forward_interrupt(guest, ctx);
+            true
+        },
+        Trap::Interrupt(Interrupt::SupervisorSoft) => {
+            // PR #38 (`feature/multivcpu-scheduler`) treats SBI IPIs as Host
+            // scheduling events; virtual SSIP remains in the shadow CSR state.
+            unsafe { asm!("csrci sip, 2") };
+            true
         },
         _ => {  
             panic!(
@@ -119,8 +131,12 @@ pub fn trap_handler() -> ! {
                 guest.smode
             );
         }
+    };
+    if preempt {
+        hypervisor.preempt(hart_id)
+            .expect("preemption left Host hart without a runnable vCPU");
     }
-    drop(hypervisor);
+    drop(hypervisor_guard);
     trap_return();
 }
 
@@ -130,11 +146,15 @@ pub fn trap_handler() -> ! {
 /// finally, jump to new addr of __restore asm function
 pub fn trap_return() -> ! {
     set_user_trap_entry();
+    let hart_id = HartId::current();
     let trap_cx_ptr = TRAP_CONTEXT;
-    unsafe{ HYPOCAUST.force_unlock(); }
-    let mut hypervisor = HYPOCAUST.lock();
-    let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-    let (user_satp, flush_asid) = hypervisor.prepare_current_user_token();
+    let (user_satp, flush_asid) = {
+        let mut hypervisor_guard = HYPOCAUST.lock();
+        hypervisor_guard
+            .as_mut()
+            .unwrap()
+            .prepare_current_user_token(hart_id)
+    };
     if let Some(asid) = flush_asid {
         // PR #26 (`feature/shadow-page-table-asid`) flushes only a dirty
         // destination; clean shadow ASIDs retain translations across traps.
@@ -158,15 +178,23 @@ pub fn trap_return() -> ! {
 }
 
 #[no_mangle]
-pub fn trap_from_kernel(_trap_cx: &TrapContext) -> ! {
-    print_hypervisor_backtrace(_trap_cx);
+pub fn trap_from_kernel(_trap_cx: &TrapContext) {
     let scause= scause::read();
     let sepc = sepc::read();
     match scause.cause() {
+        Trap::Interrupt(Interrupt::SupervisorSoft) => {
+            // PR #38 returns an idle scheduler hart from this trap so it can
+            // check the run queue populated before the sender issued its IPI.
+            unsafe { asm!("csrci sip, 2") };
+        },
         Trap::Exception(Exception::StoreFault) | Trap::Exception(Exception::LoadFault) | Trap::Exception(Exception::LoadPageFault)=> {
+            print_hypervisor_backtrace(_trap_cx);
             let stval = stval::read();
             panic!("scause: {:?}, sepc: {:#x}, stval: {:#x}", scause.cause(), _trap_cx.sepc, stval);
         },
-        _ => { panic!("scause: {:?}, spec: {:#x}, stval: {:#x}", scause.cause(), sepc, stval::read())}
+        _ => {
+            print_hypervisor_backtrace(_trap_cx);
+            panic!("scause: {:?}, spec: {:#x}, stval: {:#x}", scause.cause(), sepc, stval::read())
+        }
     }
 }

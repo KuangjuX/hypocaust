@@ -13,6 +13,9 @@ pub struct Device {
 pub struct MachineMeta{
     pub physical_memory_offset: usize,
     pub physical_memory_size: usize,
+    /// PR #38 (`feature/multivcpu-scheduler`) records the Host execution
+    /// resources advertised by firmware for secondary-hart startup.
+    pub hart_count: usize,
 
     pub virtio: ArrayVec<Device, 16>
 }
@@ -22,6 +25,7 @@ impl MachineMeta {
         let fdt = unsafe{ Fdt::from_ptr(dtb as *const u8) }.unwrap();
         let memory = fdt.memory();
         let mut meta = MachineMeta::default();
+        meta.hart_count = fdt.cpus().count();
         for region in memory.regions() {
             meta.physical_memory_offset = region.starting_address as usize;
             meta.physical_memory_size = region.size.unwrap();
