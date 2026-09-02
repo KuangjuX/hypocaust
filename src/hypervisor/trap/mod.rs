@@ -113,7 +113,7 @@ pub fn trap_handler() -> ! {
                 scause.cause(),
                 stval,
                 ctx.sepc,
-                guest.shadow_state.smode()
+                guest.smode
             );
         }
     }

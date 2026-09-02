@@ -2,7 +2,7 @@ use riscv::addr::BitField;
 
 
 use crate::hypervisor::trap::trap_return;
-use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT, STATUS_SPP_BIT};
+use crate::constants::csr::status::{STATUS_SIE_BIT, STATUS_SPIE_BIT};
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
 use super::pmap::ShadowPageTables;
@@ -90,9 +90,6 @@ impl<P> ShadowState<P> where P: PageTable + PageDebug {
         self.csrs.sstatus.set_bit(STATUS_SPIE_BIT, true);
     }
 
-    pub fn smode(&self) -> bool { 
-        self.csrs.sstatus.get_bit(STATUS_SPP_BIT)    
-    } 
     // 是否开启分页
     pub fn paged(&self) -> bool { self.csrs.satp != 0 }
 
