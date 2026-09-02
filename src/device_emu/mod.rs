@@ -10,6 +10,7 @@ pub use uart::Uart;
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
 pub use plic::VirtualPlic;
+pub use plic::VIRTIO_BLOCK_IRQ;
 pub use virtio::VirtIO;
 
 const QEMU_TEST_GPA: usize = 0x0010_0000;
@@ -87,8 +88,14 @@ impl DeviceBus {
     /// PR #39 performs a 32-bit write only when this VM owns the address.
     pub fn write_u32(&mut self, guest_address: usize, value: u32) -> bool {
         if self.virtio.contains(guest_address) {
+            let acknowledged = self.virtio.is_interrupt_ack(guest_address);
             self.virtio
                 .write(guest_address, value, &self.guest_memory);
+            if acknowledged {
+                // PR #42 lowers only this VM's VirtIO PLIC line after the
+                // physical backend has observed the Guest acknowledgement.
+                self.plic.lower(VIRTIO_BLOCK_IRQ);
+            }
             return true;
         }
         if self.qemu_virt_tester.contains(guest_address) {
@@ -116,6 +123,29 @@ impl DeviceBus {
     /// to one target vCPU's virtual SEIP state.
     pub fn has_irq(&self, context: usize) -> bool {
         self.plic.has_interrupt(context)
+    }
+
+    /// PR #42 polls the asynchronous QEMU backend at a bounded Host timer
+    /// boundary and raises this VM's VirtIO source on new used-ring entries.
+    pub fn poll_async(&mut self, context: usize) -> bool {
+        if self.virtio.poll_completions() {
+            self.plic.raise(VIRTIO_BLOCK_IRQ, context);
+            let (notifications, completions) = self.virtio.progress();
+            // PR #42 samples powers of two so completion progress is visible
+            // without turning normal block traffic into a serial-log flood.
+            if completions.is_power_of_two() {
+                htracking!(
+                    "async VirtIO notifications={} completions={}",
+                    notifications,
+                    completions,
+                );
+            }
+        }
+        self.plic.has_interrupt(context)
+    }
+
+    pub fn virtio_progress(&self) -> (usize, usize) {
+        self.virtio.progress()
     }
 }
 
