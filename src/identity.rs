@@ -31,6 +31,20 @@ impl VcpuId {
     }
 }
 
+/// PR #38 (`feature/multivcpu-scheduler`) names a schedulable vCPU without
+/// conflating its VM ownership with the Host hart currently running it.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct VcpuKey {
+    pub vm_id: VmId,
+    pub vcpu_id: VcpuId,
+}
+
+impl VcpuKey {
+    pub const fn new(vm_id: VmId, vcpu_id: VcpuId) -> Self {
+        Self { vm_id, vcpu_id }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct HartId(usize);
 
@@ -45,5 +59,12 @@ impl HartId {
 
     pub const fn is_boot(self) -> bool {
         self.0 == 0
+    }
+
+    /// PR #38 reads the Host hart identity restored by the trap entry path.
+    pub fn current() -> Self {
+        let index: usize;
+        unsafe { core::arch::asm!("mv {}, tp", out(reg) index) };
+        Self(index)
     }
 }

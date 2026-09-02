@@ -5,6 +5,7 @@ KERNEL_BIN := target/$(TARGET)/$(MODE)/hypocaust.bin
 
 GDB ?= gdb-multiarch
 QEMU ?= qemu-system-riscv64
+SMP ?= 1
 OBJDUMP ?= rust-objdump --arch-name=riscv64
 OBJCOPY ?= rust-objcopy --binary-architecture=riscv64
 
@@ -19,7 +20,9 @@ XV6_RUST_KERNEL_ELF := $(XV6_RUST_DIR)/kernel/target/$(TARGET)/$(MODE)/kernel
 XV6_RUST_FS_IMG := $(XV6_RUST_DIR)/fs.img
 
 # QEMU's bundled OpenSBI loads Hypocaust at its linked 0x80200000 entry point.
-QEMUOPTS := -machine virt -m 3G -bios default -kernel $(KERNEL_ELF) -nographic
+# PR #38 (`feature/multivcpu-scheduler`) makes Host hart count configurable for
+# scheduler and secondary-hart validation while preserving the one-hart default.
+QEMUOPTS := -machine virt -smp $(SMP) -m 3G -bios default -kernel $(KERNEL_ELF) -nographic
 QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
@@ -30,6 +33,7 @@ help:
 	@echo "  make qemu-xv6                    build xv6-rust, copy its artifacts, and boot"
 	@echo "  make xv6-rust                    refresh guest_kernel and fs.img only"
 	@echo "  make qemu                        boot using existing local guest artifacts"
+	@echo "  make qemu SMP=2                  boot with two Host harts"
 	@echo "  make qemu-gdb                    wait for GDB on TCP port 1234"
 	@echo "  make clean                       remove Hypocaust and copied guest artifacts"
 	@echo "  XV6_RUST_DIR=/path/to/xv6-rust  override the default sibling checkout"

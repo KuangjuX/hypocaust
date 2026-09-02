@@ -1,14 +1,13 @@
 use alloc::vec::Vec;
+use core::arch::asm;
 use spin::Mutex;
 
-
-use crate::constants::layout::TRAP_CONTEXT;
-use crate::guest::{Vcpu, VirtualMachine};
-use crate::identity::{VcpuId, VmId};
-use crate::page_table::{PageTable, PageTableSv39, VirtPageNum};
 use crate::debug::PageDebug;
 use crate::guest::context::TaskContext;
 use crate::guest::switch::__switch;
+use crate::guest::{Vcpu, VirtualMachine};
+use crate::identity::{HartId, VcpuKey, VmId};
+use crate::page_table::{PageTable, PageTableSv39};
 
 // PR #16 (fix-bug/modern-rust-toolchain): preserve the allocator type re-export
 // while keeping deny(warnings) useful for all other imports.
@@ -24,41 +23,24 @@ pub mod hyp_alloc;
 pub mod trap;
 pub mod fdt;
 pub mod shared;
+pub mod scheduler;
+
+use self::scheduler::Scheduler;
 
 pub struct Hypervisor<P: PageTable + PageDebug> {
     pub meta: MachineMeta,
     /// PR #34 (`feature/vm-vcpu-identities`) stores VM ownership explicitly instead of
     /// treating a physical hart number as a Guest index.
     pub vms: Vec<VirtualMachine<P>>,
-    pub current_vm_id: VmId,
-    pub current_vcpu_id: VcpuId,
+    /// PR #38 (`feature/multivcpu-scheduler`) owns the runnable queue and one
+    /// independent current-vCPU slot per Host hart.
+    scheduler: Scheduler,
 }
 
 
 pub static HYPOCAUST: Mutex<Option<Hypervisor<PageTableSv39>>> = Mutex::new(None);
 
 impl<P: PageTable + PageDebug> Hypervisor<P> {
-    pub fn run_vcpu(&mut self, vm_id: VmId, vcpu_id: VcpuId) -> ! {
-        self.current_vm_id = vm_id;
-        self.current_vcpu_id = vcpu_id;
-        let vcpu = self
-            .vm(vm_id)
-            .and_then(|vm| vm.vcpu(vcpu_id))
-            .expect("selected vCPU does not exist");
-        let task_cx_ptr = &vcpu.task_cx as *const TaskContext;
-        let mut _unused = TaskContext::zero_init();
-        hdebug!(
-            "run VM {} vCPU {}......",
-            vm_id.index(),
-            vcpu_id.index(),
-        );
-        // before this, we should drop local variables that must be dropped manually
-        unsafe {
-            __switch(&mut _unused as *mut _, task_cx_ptr);
-        }
-        panic!("unreachable in run_first_task!");
-    }
-
     pub fn add_vm(&mut self, vm: VirtualMachine<P>) {
         assert!(
             self.vms.iter().all(|existing| existing.id != vm.id),
@@ -74,6 +56,9 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
                 "duplicate global vCPU ID",
             );
         }
+        for vcpu_id in vm.vcpu_ids() {
+            self.scheduler.register(VcpuKey::new(vm.id, vcpu_id));
+        }
         self.vms.push(vm);
     }
 
@@ -87,38 +72,124 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
 
     /// PR #26 (`feature/shadow-page-table-asid`) returns both the selected
     /// shadow token and an optional destination ASID that must be fenced.
-    pub fn prepare_current_user_token(&mut self) -> (usize, Option<usize>) {
-        self.current_vcpu().prepare_user_token()
+    pub fn prepare_current_user_token(
+        &mut self,
+        hart_id: HartId,
+    ) -> (usize, Option<usize>) {
+        self.current_vcpu(hart_id).prepare_user_token()
     }
 
-    pub fn current_trap_cx(&mut self) -> &'static mut TrapContext {
-        self.current_vcpu()
-            .memory_set
-            .translate(VirtPageNum::from(TRAP_CONTEXT >> 12))
-            .unwrap()
-            .ppn()
-            .get_mut()
+    pub fn current_trap_cx(&mut self, hart_id: HartId) -> &'static mut TrapContext {
+        self.current_vcpu(hart_id).trap_cx_ppn.get_mut()
     }
 
-    pub fn current_vcpu(&mut self) -> &mut Vcpu<P> {
-        let vm_id = self.current_vm_id;
-        let vcpu_id = self.current_vcpu_id;
-        self.vm_mut(vm_id)
-            .and_then(|vm| vm.vcpu_mut(vcpu_id))
+    pub fn current_vcpu(&mut self, hart_id: HartId) -> &mut Vcpu<P> {
+        let key = self.scheduler.current(hart_id)
+            .expect("Host hart has no current vCPU");
+        self.vcpu_mut(key)
+    }
+
+    pub fn schedule(&mut self, hart_id: HartId) -> Option<VcpuKey> {
+        let key = self.scheduler.schedule(hart_id)?;
+        self.bind_vcpu_to_hart(key, hart_id);
+        Some(key)
+    }
+
+    pub fn preempt(&mut self, hart_id: HartId) -> Option<VcpuKey> {
+        let key = self.scheduler.preempt(hart_id)?;
+        self.bind_vcpu_to_hart(key, hart_id);
+        Some(key)
+    }
+
+    pub fn block_current(&mut self, hart_id: HartId) -> Option<VcpuKey> {
+        let key = self.scheduler.block_current(hart_id)?;
+        self.bind_vcpu_to_hart(key, hart_id);
+        Some(key)
+    }
+
+    fn vcpu_mut(&mut self, key: VcpuKey) -> &mut Vcpu<P> {
+        self.vm_mut(key.vm_id)
+            .and_then(|vm| vm.vcpu_mut(key.vcpu_id))
             .expect("current vCPU does not exist")
+    }
+
+    fn bind_vcpu_to_hart(&mut self, key: VcpuKey, hart_id: HartId) {
+        // The assembly trap entry reads this after saving the Guest's tp.
+        self.vcpu_mut(key).trap_cx_ppn.get_mut::<TrapContext>().host_hart_id =
+            hart_id.index();
+    }
+}
+
+/// PR #38 (`feature/multivcpu-scheduler`) drops the global lock before entering
+/// a Guest. Trap handlers can therefore acquire it without `force_unlock`.
+pub fn run_scheduler(hart_id: HartId) -> ! {
+    {
+        let mut guard = HYPOCAUST.lock();
+        guard
+            .as_mut()
+            .unwrap()
+            .scheduler
+            .mark_hart_online(hart_id);
+    }
+    loop {
+        let next = {
+            let mut guard = HYPOCAUST.lock();
+            let hypervisor = guard.as_mut().unwrap();
+            hypervisor.schedule(hart_id).map(|key| {
+                let task_cx_ptr = &hypervisor.vcpu_mut(key).task_cx as *const TaskContext;
+                (key, task_cx_ptr)
+            })
+        };
+        if let Some((key, task_cx_ptr)) = next {
+            hdebug!(
+                "hart {} runs VM {} vCPU {}",
+                hart_id.index(),
+                key.vm_id.index(),
+                key.vcpu_id.index(),
+            );
+            trap::enable_timer_interrupt();
+            crate::timer::set_default_next_trigger();
+            let mut scheduler_cx = TaskContext::zero_init();
+            unsafe { __switch(&mut scheduler_cx as *mut _, task_cx_ptr) };
+            unreachable!();
+        }
+
+        // PR #38 lets idle harts accept only Host software interrupts. A
+        // wakeup returns through the kernel trap frame and rechecks the queue.
+        unsafe {
+            asm!(
+                "csrsi sie, 2",
+                "csrsi sstatus, 2",
+                "wfi",
+                "csrci sstatus, 2",
+            )
+        };
+    }
+}
+
+/// PR #38 makes a blocked vCPU runnable and kicks an already-online idle hart.
+/// The IPI is sent after releasing the global lock so the receiver can run.
+pub fn wake_vcpu(key: VcpuKey) {
+    let target = {
+        let mut guard = HYPOCAUST.lock();
+        guard.as_mut().unwrap().scheduler.wake(key)
+    };
+    if let Some(hart_id) = target {
+        crate::sbi::send_ipi(hart_id);
     }
 }
 
 
 
 pub fn initialize_vmm(meta: MachineMeta) {
-    unsafe{ HYPOCAUST.force_unlock(); }
+    // PR #38 validates Ready/Running/Blocked transitions before any Guest can
+    // enter the scheduler and make a failure harder to diagnose.
+    scheduler::self_test();
     let old = HYPOCAUST.lock().replace(
         Hypervisor{
             meta,
             vms: Vec::new(),
-            current_vm_id: VmId::new(0),
-            current_vcpu_id: VcpuId::new(0),
+            scheduler: Scheduler::new(),
         }
     );
     core::mem::forget(old);

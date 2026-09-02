@@ -18,7 +18,8 @@ __alltraps:
     sd x1, 1*8(sp)
     # skip sp(x2), we will save it later
     sd x3, 3*8(sp)
-    # skip tp(x4), application does not use it
+    # PR #38 saves the Guest tp before using tp as the Host hart-local ID.
+    sd x4, 4*8(sp)
     # save x5~x31
     .set n, 5
     .rept 27
@@ -37,6 +38,9 @@ __alltraps:
     ld t0, 34*8(sp)
     # load trap_handler into t1
     ld t1, 36*8(sp)
+    # restore the Host hart identity before entering Rust.
+    ld t2, 37*8(sp)
+    mv tp, t2
     # move to kernel_sp
     ld sp, 35*8(sp)
     # switch to kernel space
@@ -61,9 +65,10 @@ __restore:
     ld t1, 33*8(sp)
     csrw sstatus, t0
     csrw sepc, t1
-    # restore general purpose registers except x0/sp/tp
+    # restore general purpose registers except x0/sp
     ld x1, 1*8(sp)
     ld x3, 3*8(sp)
+    ld x4, 4*8(sp)
     .set n, 5
     .rept 27
         LOAD_GP %n
@@ -90,6 +95,8 @@ __alltraps_k:
     mv a0, sp
     csrr t2, sscratch
     jalr t2
+    # PR #38 lets handled Host IPIs return to the idle scheduler loop.
+    j __restore_k
 
 __restore_k:
     ld t0, 32*8(sp)

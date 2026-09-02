@@ -1,6 +1,7 @@
 //! SBI call wrappers
 
 use core::arch::asm;
+use crate::identity::HartId;
 
 
 const SBI_CONSOLE_PUTCHAR: usize = 1;
@@ -36,6 +37,23 @@ pub fn console_getchar() -> usize {
 
 pub fn set_timer(stime: usize) {
     sbi_rt::set_timer(stime as u64);
+}
+
+/// PR #38 (`feature/multivcpu-scheduler`) starts a Host hart at Hypocaust's
+/// physical entry point through the standard SBI HSM extension.
+pub fn start_hart(hart_id: HartId, start_addr: usize, opaque: usize) -> bool {
+    let result = sbi_rt::hart_start(hart_id.index(), start_addr, opaque);
+    if result.error != 0 {
+        hwarning!("failed to start hart {}: {:?}", hart_id.index(), result);
+        return false;
+    }
+    true
+}
+
+/// PR #38 wakes one idle Host hart after a vCPU becomes runnable.
+pub fn send_ipi(hart_id: HartId) {
+    let result = sbi_rt::send_ipi(1, hart_id.index());
+    assert_eq!(result.error, 0, "SBI failed to send scheduler IPI");
 }
 
 /// use sbi call to shutdown the kernel
