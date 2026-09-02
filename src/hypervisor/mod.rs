@@ -27,7 +27,7 @@ pub mod shared;
 
 pub struct Hypervisor<P: PageTable + PageDebug> {
     pub meta: MachineMeta,
-    /// `feature/vm-vcpu-identities` stores VM ownership explicitly instead of
+    /// PR #34 (`feature/vm-vcpu-identities`) stores VM ownership explicitly instead of
     /// treating a physical hart number as a Guest index.
     pub vms: Vec<VirtualMachine<P>>,
     pub current_vm_id: VmId,
@@ -64,7 +64,7 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
             self.vms.iter().all(|existing| existing.id != vm.id),
             "duplicate VM ID",
         );
-        // `feature/vm-vcpu-identities` uses globally unique vCPU IDs because
+        // PR #34 (`feature/vm-vcpu-identities`) uses globally unique vCPU IDs because
         // each ID currently selects one Host kernel-stack slot.
         for vcpu_id in vm.vcpu_ids() {
             assert!(

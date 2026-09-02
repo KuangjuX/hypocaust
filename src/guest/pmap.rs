@@ -201,7 +201,7 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
 
 }
 
-/// `feature/vm-vcpu-identities` keys Guest-physical memory by VM ownership;
+/// PR #34 (`feature/vm-vcpu-identities`) keys Guest-physical memory by VM ownership;
 /// the physical hart running a vCPU must never change its translation.
 pub fn gpa2hpa(va: usize, vm_id: VmId) -> usize {
     va + (vm_id.index() + 1) * segment_layout::HART_SEGMENT_SIZE

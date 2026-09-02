@@ -29,7 +29,7 @@ pub use self::context::ShadowState;
 #[allow(unused_imports)]
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
 
-/// `feature/vm-vcpu-identities` makes a VM the ownership boundary for vCPUs.
+/// PR #34 (`feature/vm-vcpu-identities`) makes a VM the ownership boundary for vCPUs.
 /// Guest memory and devices move to this level in later multi-Guest PRs once
 /// their interfaces no longer depend on vCPU-local state.
 pub struct VirtualMachine<P: PageTable + PageDebug> {
@@ -70,7 +70,7 @@ where
     }
 }
 
-/// `feature/vm-vcpu-identities` keeps one virtual CPU's architectural state
+/// PR #34 (`feature/vm-vcpu-identities`) keeps one virtual CPU's architectural state
 /// separate from both its owning VM and the physical hart that executes it.
 pub struct Vcpu<P: PageTable + PageDebug> {
     pub memory_set: MemorySet<P>,

@@ -1,6 +1,6 @@
 # VM, vCPU, and hart identities
 
-`feature/vm-vcpu-identities` introduces the first ownership seam required for
+PR #34 (`feature/vm-vcpu-identities`) introduces the first ownership seam required for
 running more than one Guest. The previous runtime used one integer as both a
 Guest index and a physical hart number. That makes migration and scheduling
 unsafe: moving a Guest to another hart can accidentally select different RAM,

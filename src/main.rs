@@ -117,7 +117,7 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         timer::set_default_next_trigger();
         // 创建用户态的 guest kernel 内存空间
         let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-        // `feature/vm-vcpu-identities` models VM ownership independently from
+        // PR #34 (`feature/vm-vcpu-identities`) models VM ownership independently from
         // the globally unique vCPU that happens to execute on this Host hart.
         let vm_id = VmId::new(0);
         let vcpu_id = VcpuId::new(0);
