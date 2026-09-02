@@ -9,8 +9,7 @@ pub use uart::Uart;
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
 pub use plic::VirtualPlic;
-pub use plic::VIRTIO_BLOCK_IRQ;
-use plic::{PLIC_GPA, PLIC_SIZE};
+pub use plic::{PLIC_GPA, PLIC_SIZE, VIRTIO_BLOCK_IRQ};
 pub use virtio::VirtIO;
 
 const QEMU_TEST_GPA: usize = 0x0010_0000;
@@ -77,6 +76,15 @@ impl DeviceBusConfig {
                 QEMU_TEST_HPA,
                 QEMU_TEST_SIZE,
             )),
+        )
+    }
+
+    /// PR #45 (`feature/multi-guest-qemu`) gives one VM exclusive use of a
+    /// discovered QEMU VirtIO backend while preserving the standard Guest GPA.
+    pub const fn qemu_virtio_block(host_base: usize) -> Self {
+        Self::new(
+            MmioAssignment::new(VIRTIO_BLOCK_GPA, host_base, 0x1000),
+            None,
         )
     }
 
@@ -238,8 +246,11 @@ impl DeviceBus {
             // PR #42 samples powers of two so completion progress is visible
             // without turning normal block traffic into a serial-log flood.
             if completions.is_power_of_two() {
+                // PR #45 labels progress by VM so concurrent backends remain
+                // distinguishable even on the shared diagnostic console.
                 htracking!(
-                    "async VirtIO notifications={} completions={}",
+                    "VM {} async VirtIO notifications={} completions={}",
+                    self.guest_memory.vm_id().index(),
                     notifications,
                     completions,
                 );

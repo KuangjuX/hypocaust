@@ -37,9 +37,10 @@ mod hypervisor;
 
 
 use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
-use crate::guest::{VirtualMachine, VmConfig};
+use crate::device_emu::DeviceBusConfig;
+use crate::guest::{install_guest_fdt, VcpuBootConfig, VirtualMachine, VmConfig};
 use crate::hypervisor::{HYPOCAUST, HYPERVISOR_MEMORY};
-use crate::identity::{GuestHartId, HartId, VcpuId};
+use crate::identity::{GuestHartId, HartId, VcpuId, VmId};
 use crate::mm::MemorySet;
 
 // use fdt::Fdt;
@@ -118,30 +119,57 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         {
             let mut hypervisor = HYPOCAUST.lock();
             let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-            let vcpu_id = VcpuId::new(0);
-            // PR #43 (`feature/vm-runtime-config`) makes the QEMU device
-            // assignment visible at the VM construction boundary.
-            let mut vm = VirtualMachine::new(VmConfig::qemu_default());
-            // PR #36 (`feature/vm-guest-memory`) creates the VM-owned RAM slot
-            // before loading the Guest so every mapping uses the same capability.
-            let guest_kernel_memory =
-                MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
-            // 初始化虚拟内存
-            mm::vm_init(&guest_kernel_memory);
+            // PR #45 (`feature/multi-guest-qemu`) requires two distinct active
+            // Host VirtIO devices before granting one backend to each VM.
+            let virtio_backends = [
+                hypervisor
+                    .meta
+                    .virtio
+                    .get(0)
+                    .expect("multi-Guest mode requires QEMU VirtIO backend 0")
+                    .base_address,
+                hypervisor
+                    .meta
+                    .virtio
+                    .get(1)
+                    .expect("multi-Guest mode requires QEMU VirtIO backend 1")
+                    .base_address,
+            ];
             hypervisor::trap::init();
-            // 测试重映射
+            for (vm_index, host_virtio_base) in virtio_backends.into_iter().enumerate() {
+                let vm_id = VmId::new(vm_index);
+                let vcpu_id = VcpuId::new(vm_index);
+                let guest_hart_id = GuestHartId::new(0);
+                let config = VmConfig::new(
+                    vm_id,
+                    DeviceBusConfig::qemu_virtio_block(host_virtio_base),
+                );
+                let mut vm = VirtualMachine::new(config);
+                // PR #45 loads the same example kernel into disjoint VM-owned
+                // RAM slots; no Guest page can alias another VM's memory.
+                let guest_kernel_memory =
+                    MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
+                mm::vm_init(&guest_kernel_memory);
+                mm::guest_kernel_test(vm.guest_memory());
+                let guest_fdt = install_guest_fdt(vm.guest_memory(), guest_hart_id);
+                let user_guest_kernel_memory =
+                    MemorySet::create_user_guest_kernel(&guest_kernel_memory);
+                vm.add_vcpu(
+                    user_guest_kernel_memory,
+                    vcpu_id,
+                    VcpuBootConfig::new(guest_hart_id, guest_fdt),
+                );
+                hdebug!(
+                    "configured VM {} with VirtIO backend {:#x} and DTB {:#x}",
+                    vm_id.index(),
+                    host_virtio_base,
+                    guest_fdt,
+                );
+                hypervisor.add_vm(vm);
+            }
+            // Test the shared Host mapping after both Guest RAM slots have
+            // been installed by PR #45.
             mm::remap_test();
-            // 测试 guest kernel 内存映射
-            mm::guest_kernel_test(vm.guest_memory());
-            // 创建用户态的 guest kernel 内存空间
-            let user_guest_kernel_memory =
-                MemorySet::create_user_guest_kernel(&guest_kernel_memory);
-            vm.add_vcpu(
-                user_guest_kernel_memory,
-                vcpu_id,
-                GuestHartId::new(0),
-            );
-            hypervisor.add_vm(vm);
         }
         // PR #38 (`feature/multivcpu-scheduler`) starts secondary Host harts
         // only after VM construction and Host mappings are globally visible.

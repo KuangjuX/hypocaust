@@ -9,7 +9,9 @@ SMP ?= 1
 OBJDUMP ?= rust-objdump --arch-name=riscv64
 OBJCOPY ?= rust-objcopy --binary-architecture=riscv64
 
-FS_IMG := fs.img
+FS_VM0_IMG := fs-vm0.img
+FS_VM1_IMG := fs-vm1.img
+FS_IMGS := $(FS_VM0_IMG) $(FS_VM1_IMG)
 GUEST_KERNEL_ELF := guest_kernel
 GUEST_KERNEL_FEATURE := --features embed_guest_kernel
 
@@ -23,15 +25,19 @@ XV6_RUST_FS_IMG := $(XV6_RUST_DIR)/fs.img
 # PR #38 (`feature/multivcpu-scheduler`) makes Host hart count configurable for
 # scheduler and secondary-hart validation while preserving the one-hart default.
 QEMUOPTS := -machine virt -smp $(SMP) -m 3G -bios default -kernel $(KERNEL_ELF) -nographic
-QEMUOPTS += -drive file=$(FS_IMG),if=none,format=raw,id=x0
+QEMUOPTS += -drive file=$(FS_VM0_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+# PR #45 (`feature/multi-guest-qemu`) gives the second VM a distinct writable
+# disk and physical MMIO backend instead of sharing VM 0's queue/device state.
+QEMUOPTS += -drive file=$(FS_VM1_IMG),if=none,format=raw,id=x1
+QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 
 .PHONY: help build xv6-rust qemu qemu-xv6 qemu-gdb gdb debug asm clean check-xv6-rust
 
 help:
 	@echo "Hypocaust build targets:"
 	@echo "  make qemu-xv6                    build xv6-rust, copy its artifacts, and boot"
-	@echo "  make xv6-rust                    refresh guest_kernel and fs.img only"
+	@echo "  make xv6-rust                    refresh guest_kernel and per-VM disks"
 	@echo "  make qemu                        boot using existing local guest artifacts"
 	@echo "  make qemu SMP=2                  boot with two Host harts"
 	@echo "  make qemu-gdb                    wait for GDB on TCP port 1234"
@@ -55,17 +61,20 @@ xv6-rust: check-xv6-rust
 	@test -f "$(XV6_RUST_KERNEL_ELF)" || { echo "error: missing $(XV6_RUST_KERNEL_ELF)" >&2; exit 1; }
 	@test -f "$(XV6_RUST_FS_IMG)" || { echo "error: missing $(XV6_RUST_FS_IMG)" >&2; exit 1; }
 	cp "$(XV6_RUST_KERNEL_ELF)" "$(GUEST_KERNEL_ELF)"
-	cp "$(XV6_RUST_FS_IMG)" "$(FS_IMG)"
+	# PR #45 creates independent writable images so simultaneous Guests cannot
+	# corrupt one another through a shared filesystem backend.
+	cp "$(XV6_RUST_FS_IMG)" "$(FS_VM0_IMG)"
+	cp "$(XV6_RUST_FS_IMG)" "$(FS_VM1_IMG)"
 
 $(GUEST_KERNEL_ELF):
 	@echo "error: $(GUEST_KERNEL_ELF) is missing; run 'make xv6-rust' first" >&2
 	@false
 
-$(FS_IMG):
-	@echo "error: $(FS_IMG) is missing; run 'make xv6-rust' first" >&2
+$(FS_VM0_IMG) $(FS_VM1_IMG):
+	@echo "error: per-VM disk images are missing; run 'make xv6-rust' first" >&2
 	@false
 
-build: $(GUEST_KERNEL_ELF) $(FS_IMG)
+build: $(GUEST_KERNEL_ELF) $(FS_IMGS)
 	cargo build $(GUEST_KERNEL_FEATURE)
 
 $(KERNEL_BIN): build
@@ -95,4 +104,4 @@ asm: build
 
 clean:
 	cargo clean
-	rm -f $(GUEST_KERNEL_ELF) $(FS_IMG) hyper.S guest.S
+	rm -f $(GUEST_KERNEL_ELF) $(FS_IMGS) hyper.S guest.S

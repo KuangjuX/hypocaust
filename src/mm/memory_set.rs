@@ -544,6 +544,44 @@ pub fn guest_kernel_test(guest_memory: &GuestMemory) {
     hdebug!("guest kernel test passed!");
 }
 
+/// PR #45 (`feature/multi-guest-qemu`) maps Host-only MMIO apertures discovered
+/// from the Host DTB. Guest page tables still expose only their configured GPA.
+pub fn map_host_mmio(start: usize, size: usize) {
+    assert!(size != 0, "Host MMIO range is empty");
+    assert_eq!(start % PAGE_SIZE, 0, "Host MMIO base is not page-aligned");
+    assert_eq!(size % PAGE_SIZE, 0, "Host MMIO size is not page-aligned");
+    let end = start.checked_add(size).expect("Host MMIO range overflow");
+    let mut host_memory = HYPERVISOR_MEMORY.exclusive_access();
+    for address in (start..end).step_by(PAGE_SIZE) {
+        let vpn = VirtAddr::from(address).floor();
+        if host_memory
+            .page_table
+            .translate(vpn)
+            .is_some_and(|pte| pte.is_valid())
+        {
+            continue;
+        }
+        // Device registers are data and must never become executable in the
+        // Host address space merely because a platform reports them.
+        host_memory.page_table.map(
+            vpn,
+            PhysAddr::from(address).floor(),
+            PTEFlags::R | PTEFlags::W,
+        );
+        let installed = host_memory
+            .page_table
+            .translate(vpn)
+            .expect("Host MMIO mapping disappeared after installation");
+        assert!(installed.is_valid(), "Host MMIO mapping is invalid");
+        assert_eq!(
+            installed.ppn(),
+            PhysAddr::from(address).floor(),
+            "Host MMIO mapping does not preserve the physical aperture",
+        );
+    }
+    host_memory.activate();
+}
+
 /// Map one complete VM RAM capability into the Host before any ELF copy, page
 /// table walk, or mediated DMA can dereference its Host physical addresses.
 fn prepare_guest_memory(guest_memory: &GuestMemory) {
