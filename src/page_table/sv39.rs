@@ -124,12 +124,16 @@ impl PageTable for PageTableSv39 {
     }
 
     fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
-        self.find_pte(vpn).map(|pte| *pte)
+        // PR #46 (`fix-bug/invalid-leaf-translation`) treats an invalid leaf
+        // as unmapped even when its intermediate page-table pages still exist.
+        self.find_pte(vpn).copied().filter(PageTableEntry::is_valid)
     }
 
     #[allow(unused)]
     fn translate_guest(&self, vpn: VirtPageNum, guest_memory: &GuestMemory) -> Option<PageTableEntry> {
-        self.find_guest_pte(vpn, guest_memory).map(|pte| *pte)
+        self.find_guest_pte(vpn, guest_memory)
+            .copied()
+            .filter(PageTableEntry::is_valid)
     }
 
     fn token(&self) -> usize {
@@ -166,6 +170,23 @@ impl PageTable for PageTableSv39 {
         }
         None
     }
+}
+
+/// PR #46 validates the distinction between an allocated page-table path and
+/// a valid leaf mapping before any Guest relies on translation results.
+pub fn translation_self_test() {
+    let mut page_table = PageTableSv39::new();
+    let vpn = VirtPageNum::from(0x12345);
+    let ppn = PhysPageNum::from(0x54321);
+    assert_eq!(page_table.translate(vpn), None);
+    page_table.map(vpn, ppn, PTEFlags::R | PTEFlags::W);
+    assert_eq!(page_table.translate(vpn).map(|pte| pte.ppn()), Some(ppn));
+    page_table.unmap(vpn);
+    assert_eq!(
+        page_table.translate(vpn),
+        None,
+        "invalid leaf was reported as a translation",
+    );
 }
 
 /// translate a pointer to a mutable u8 Vec through page table
