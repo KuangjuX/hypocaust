@@ -140,7 +140,9 @@ pub fn trap_handler() -> ! {
     guest.shadow_state.shadow_paging_stats.record_trap();
     let preempt = match route_trap(scause.cause()) {
         TrapRoute::EmulateInstruction => {
-            ifault(guest, ctx);
+            // PR #49 (`feature/per-vm-console`) supplies the owning bus so
+            // legacy SBI console calls use VM-local frontend state.
+            ifault(guest, device_bus, ctx);
             false
         },
         // PR #17 (fix-bug/virtio-dma-translation): VirtIO reads fault by

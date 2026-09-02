@@ -4,16 +4,21 @@ use riscv::addr::BitField;
 use super::TrapContext;
 use super::forward_exception;
 use crate::debug::PageDebug;
+use crate::device_emu::DeviceBus;
 use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
-use crate::sbi::{ console_putchar, set_timer, console_getchar, shutdown };
+use crate::sbi::{ set_timer, shutdown };
 use crate::guest::sbi::{ SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR, SBI_SET_TIMER, SBI_SHUTDOWN };
 use crate::guest::{Vcpu, VirtualInterrupt};
 
 
 
 /// 处理特权级指令问题
-pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
+pub fn ifault<P: PageTable + PageDebug>(
+    guest: &mut Vcpu<P>,
+    device_bus: &mut DeviceBus,
+    ctx: &mut TrapContext,
+) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -35,10 +40,12 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapConte
                     }
                     SBI_CONSOLE_PUTCHAR => {
                         let c = ctx.x[10];
-                        console_putchar(c);
+                        // PR #49 (`feature/per-vm-console`) buffers output in
+                        // the current VM's DeviceBus before Host emission.
+                        device_bus.console_putchar(c);
                     }
                     SBI_CONSOLE_GETCHAR => {
-                        let c = console_getchar();
+                        let c = device_bus.console_getchar();
                         ctx.x[10] = c;
                     }
                     SBI_SHUTDOWN => shutdown(),

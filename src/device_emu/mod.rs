@@ -6,6 +6,7 @@ use alloc::sync::Arc;
 
 use crate::guest::GuestMemory;
 pub use uart::Uart;
+pub(crate) use uart::self_test as console_self_test;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
@@ -271,6 +272,17 @@ impl DeviceBus {
 
     pub fn virtio_progress(&self) -> (usize, usize) {
         self.virtio.progress()
+    }
+
+    /// PR #49 routes legacy SBI console output through this VM's buffered
+    /// console frontend rather than writing directly to the Host UART.
+    pub fn console_putchar(&mut self, value: usize) {
+        self.uart.write_console_byte(value as u8);
+    }
+
+    /// PR #49 applies exclusive Host input focus at the VM-owned bus boundary.
+    pub fn console_getchar(&mut self) -> usize {
+        self.uart.read_console_byte()
     }
 }
 
