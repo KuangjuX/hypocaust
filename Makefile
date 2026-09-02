@@ -20,12 +20,11 @@ OBJDUMP     := rust-objdump --arch-name=riscv64
 OBJCOPY     := rust-objcopy --binary-architecture=riscv64
 
 QEMU 		:= qemu-system-riscv64
-BOOTLOADER	:= bootloader/rustsbi-qemu.bin
+# QEMU's bundled OpenSBI tracks the current virt machine and loads the
+# hypervisor ELF at its linked 0x80200000 entry point.
+BOOTLOADER	:= default
 
-KERNEL_ENTRY_PA := 0x80200000
-
-QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER) -nographic
-QEMUOPTS	+=-device loader,file=$(KERNEL_BIN),addr=$(KERNEL_ENTRY_PA)
+QEMUOPTS	= --machine virt -m 3G -bios $(BOOTLOADER) -kernel $(KERNEL_ELF) -nographic
 QEMUOPTS	+=-drive file=$(FS_IMG),if=none,format=raw,id=x0
 QEMUOPTS	+=-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
@@ -47,7 +46,7 @@ $(KERNEL_BIN): build
 
 	
 
-qemu: $(KERNEL_BIN)
+qemu: build
 	$(QEMU) $(QEMUOPTS)
 
 clean:
@@ -56,13 +55,13 @@ clean:
 	cd minikernel/user && cargo clean
 	rm guest_kernel *.S $(FS_IMG)
 
-qemu-gdb: $(KERNEL_ELF)
+qemu-gdb: build
 	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234
 
 gdb: $(KERNEL_ELF)
 	$(GDB) $(KERNEL_ELF)
 
-debug: $(KERNEL_BIN)
+debug: build
 	@tmux new-session -d \
 		"$(QEMU) $(QEMUOPTS) -s -S" && \
 		tmux split-window -h "$(GDB) -ex 'file $(KERNEL_ELF)' -ex 'set arch riscv:rv64' -ex 'target remote localhost:1234'" && \
