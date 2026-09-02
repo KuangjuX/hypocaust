@@ -118,8 +118,10 @@ fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, hart_id: usize) {
     let mut drop = true;
     let guest_ppn = PhysPageNum::from(gpa2hpa(va, hart_id) >> 12);
     let guest_ptes = guest_ppn.get_pte_array();
-    guest_ptes.iter().for_each(|&pte| { 
-        if pte.bits != 0 { drop = false; }
+    guest_ptes.iter().for_each(|&pte| {
+        // PR #21 (fix-bug/invalid-pte-synchronization): software may retain metadata
+        // in an invalid PTE, so only V=1 keeps the page protected as a page table.
+        if pte.is_valid() { drop = false; }
     });
     if drop {
         // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
@@ -440,8 +442,9 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
-        }else if va % core::mem::size_of::<PageTableEntry>() == 0 && pte.bits == 0 {
-            // 页表项对齐且物理页号为 0, 写入 `u8`
+        }else if va % core::mem::size_of::<PageTableEntry>() == 0 && !pte.is_valid() {
+            // PR #21 (fix-bug/invalid-pte-synchronization): mirror every V=0 encoding,
+            // including allocator metadata, and release pages with no valid PTEs.
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
             // 消除页表映射，将页表内存修改为可读可写
             clear_page_table(guest_spt, va, hart_id);
@@ -482,8 +485,6 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 }else{
                     unreachable!()
                 }
-            }else{
-                unreachable!()
             }
         }
     }
