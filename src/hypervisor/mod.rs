@@ -231,6 +231,12 @@ pub fn initialize_vmm(meta: MachineMeta) {
     // enter the scheduler and make a failure harder to diagnose.
     scheduler::self_test();
     crate::guest::virtual_interrupt_self_test();
+    // PR #45 (`feature/multi-guest-qemu`) maps every active VirtIO aperture
+    // reported by the Host DTB before a VM backend dereferences its registers.
+    // These are Host mappings; per-VM DeviceBus config controls Guest access.
+    for device in &meta.virtio {
+        crate::mm::map_host_mmio(device.base_address, device.size);
+    }
     let old = HYPOCAUST.lock().replace(
         Hypervisor{
             meta,

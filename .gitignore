@@ -4,3 +4,5 @@ guest.S
 guest_kernel
 .gdb_history
 fs.img
+# PR #45 (`feature/multi-guest-qemu`) generates one writable disk per VM.
+fs-vm*.img

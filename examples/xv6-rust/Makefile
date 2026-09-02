@@ -15,4 +15,5 @@ prepare:
 	$(MAKE) -C "$(HYPOCAUST_DIR)" xv6-rust XV6_RUST_DIR="$(abspath $(XV6_RUST_DIR))"
 
 run: prepare
-	$(MAKE) -C "$(HYPOCAUST_DIR)" qemu
+	# PR #45 boots two independent xv6-rust instances on two Host harts.
+	$(MAKE) -C "$(HYPOCAUST_DIR)" qemu SMP=2

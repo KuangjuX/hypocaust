@@ -18,6 +18,7 @@ use crate::identity::{GuestHartId, VcpuId, VmId};
 
 pub mod switch;
 pub mod context;
+mod fdt;
 mod pmap;
 mod memory;
 mod shadow_stats;
@@ -29,6 +30,7 @@ use riscv::addr::BitField;
 pub use self::context::{ShadowState, VirtualInterrupt};
 pub(crate) use self::context::virtual_interrupt_self_test;
 pub use self::memory::GuestMemory;
+pub(crate) use self::fdt::install_guest_fdt;
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
 #[allow(unused_imports)]
@@ -49,6 +51,23 @@ impl VmConfig {
 
     pub const fn qemu_default() -> Self {
         Self::new(VmId::new(0), DeviceBusConfig::qemu_default())
+    }
+}
+
+/// PR #45 (`feature/multi-guest-qemu`) carries the RISC-V boot arguments that
+/// belong to one vCPU rather than deriving them from Host scheduler identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VcpuBootConfig {
+    pub guest_hart_id: GuestHartId,
+    pub device_tree_gpa: usize,
+}
+
+impl VcpuBootConfig {
+    pub const fn new(guest_hart_id: GuestHartId, device_tree_gpa: usize) -> Self {
+        Self {
+            guest_hart_id,
+            device_tree_gpa,
+        }
     }
 }
 
@@ -88,7 +107,7 @@ where
         &mut self,
         memory_set: MemorySet<P>,
         id: VcpuId,
-        guest_hart_id: GuestHartId,
+        boot: VcpuBootConfig,
     ) {
         assert!(
             self.vcpus.iter().all(|existing| existing.id != id),
@@ -97,19 +116,19 @@ where
         assert!(
             self.vcpus
                 .iter()
-                .all(|existing| existing.guest_hart_id != guest_hart_id),
+                .all(|existing| existing.guest_hart_id != boot.guest_hart_id),
             "duplicate Guest hart ID",
         );
         // PR #43 bounds the VM-local ID by the virtual PLIC's context capacity
         // before any device completion attempts to address that context.
         assert!(
-            guest_hart_id.index() < MAX_HOST_HARTS,
+            boot.guest_hart_id.index() < MAX_HOST_HARTS,
             "Guest hart ID exceeds virtual PLIC capacity",
         );
         self.vcpus.push(Vcpu::new(
             memory_set,
             id,
-            guest_hart_id,
+            boot,
             Arc::clone(&self.guest_memory),
         ));
     }
@@ -165,10 +184,11 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
     fn new(
         memory_set: MemorySet<P>,
         id: VcpuId,
-        guest_hart_id: GuestHartId,
+        boot: VcpuBootConfig,
         guest_memory: Arc<GuestMemory>,
     ) -> Self {
         let vm_id = guest_memory.vm_id();
+        let guest_hart_id = boot.guest_hart_id;
         // 获取中断上下文的物理地址
         let mut hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
         let trap_cx_ppn = memory_set
@@ -210,6 +230,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         // PR #43 passes the VM-local hart identity through the standard RISC-V
         // boot ABI. Multiple VMs may therefore each boot a hart numbered zero.
         trap_cx.x[10] = guest_hart_id.index();
+        // PR #45 supplies each VM's own synthesized DTB through the standard
+        // RISC-V `a1` boot argument instead of leaking the Host device tree.
+        trap_cx.x[11] = boot.device_tree_gpa;
         vcpu
     }
 

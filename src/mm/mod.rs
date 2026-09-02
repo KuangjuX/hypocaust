@@ -1,7 +1,7 @@
 mod memory_set;
 mod memory_region;
 
-pub use memory_set::{ remap_test, guest_kernel_test };
+pub use memory_set::{guest_kernel_test, map_host_mmio, remap_test};
 pub use memory_set::{MapPermission, MemorySet};
 pub use memory_region::MemoryRegion;
 
