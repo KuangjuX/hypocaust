@@ -8,25 +8,19 @@ pub const MEMORY_END: usize = 0x88000000;
 pub const PAGE_SIZE: usize = 0x1000;
 pub const PAGE_SIZE_BITS: usize = 0xc;
 
-/// 每个内核拥有 128 M 的空间
-pub const KERNEL_SPACE: usize = 128 * 1024 * 1024;
+// PR #36 (`feature/vm-guest-memory`) defines three fixed VM RAM/shadow slots.
+// A later configuration PR will derive these regions from platform resources.
+pub const VM_MEMORY_SLOT_SIZE: usize = 128 * 1024 * 1024;
+pub const MAX_VM_MEMORY_SLOTS: usize = 3;
 
-pub const SPT_PA_START_1: usize = 0x10000_0000;
-pub const SPT_PA_END_1: usize = SPT_PA_START_1 + KERNEL_SPACE;
+pub const SHADOW_PAGE_TABLES_HOST_START: usize = 0x10000_0000;
+pub const SHADOW_PAGE_TABLES_HOST_END: usize =
+    SHADOW_PAGE_TABLES_HOST_START + MAX_VM_MEMORY_SLOTS * VM_MEMORY_SLOT_SIZE;
 
 // 客户操作系统内存映射
-pub const GUEST_KERNEL_PHY_START_1: usize = 0x8800_0000;
-pub const GUEST_KERNEL_PHY_END_1: usize = 0x9000_0000;
+pub const VM_MEMORY_HOST_START: usize = 0x8800_0000;
 pub const GUEST_KERNEL_VIRT_START: usize = 0x8000_0000;
 pub const GUEST_KERNEL_VIRT_END: usize = 0x8800_0000;
-
-pub const GUEST_KERNEL_PHY_START_2: usize = GUEST_KERNEL_PHY_START_1 + KERNEL_SPACE;
-pub const GUEST_KERNEL_VIRT_START_2: usize = 0x8000_0000;
-
-pub const GUEST_KERNEL_PHY_START_3: usize = GUEST_KERNEL_PHY_START_2 + KERNEL_SPACE;
-pub const GUEST_KERNEL_VIRT_START_3: usize = 0x8000_0000;
-
-pub const GUEST_KERNEL_OFFSET_1: usize = 0x800_0000;
 
 /// 测试内核的跳板页和 Trap Context 的地址
 pub const GUEST_MAX_VA: usize = 1 << (9 + 9 + 9 + 12 - 1);

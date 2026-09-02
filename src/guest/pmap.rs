@@ -4,29 +4,16 @@ use core::cell::UnsafeCell;
 
 use crate::debug::PageDebug;
 use crate::hypervisor::HYPERVISOR_MEMORY;
-use crate::identity::VmId;
 use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
-use crate::constants::layout::{
-    GUEST_KERNEL_VIRT_END, GUEST_KERNEL_VIRT_START, PAGE_SIZE, TRAMPOLINE,
-    TRAP_CONTEXT,
-};
+use crate::constants::layout::{GUEST_KERNEL_VIRT_START, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT};
 
-use super::Vcpu;
+use super::{GuestMemory, Vcpu};
 use super::shadow_stats::ShadowPageTableUpdate;
 
 // PR #26 (`feature/shadow-page-table-asid`) encodes stable shadow-root ASIDs
 // in the architectural RV64 Sv39 field while reserving ASID 0 for the Host.
 const SATP_ASID_SHIFT: usize = 44;
 const MAX_SV39_ASID: usize = (1 << 16) - 1;
-
-/// 内存信息，用于帮助做地址映射
-#[allow(unused)]
-mod segment_layout {
-    pub const HART_SEGMENT_SIZE: usize = 128 * 1024 * 1024;
-    pub const SPT_OFFSET: usize = 0x10000_0000 - 0x8000_0000;
-}
-
-
 
 /// 页表(影子页表类型)
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -203,42 +190,50 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
 
 }
 
-/// PR #34 (`feature/vm-vcpu-identities`) keys Guest-physical memory by VM ownership;
-/// the physical hart running a vCPU must never change its translation.
-pub fn gpa2hpa(va: usize, vm_id: VmId) -> usize {
-    va + (vm_id.index() + 1) * segment_layout::HART_SEGMENT_SIZE
-}
-
-pub fn hpa2gpa(pa: usize, vm_id: VmId) -> usize {
-    pa - (vm_id.index() + 1) * segment_layout::HART_SEGMENT_SIZE
-}
-
-pub fn gpt2spt(va: usize, vm_id: VmId) -> usize {
-    va + segment_layout::SPT_OFFSET + vm_id.index() * segment_layout::HART_SEGMENT_SIZE
-}
-
-pub fn page_table_mode<P: PageTable>(page_table: P, vm_id: VmId) -> PageTableRoot {
-    if page_table.translate_guest(VirtPageNum::from(GUEST_KERNEL_VIRT_START >> 12), vm_id).is_some() {
+pub fn page_table_mode<P: PageTable>(page_table: P, guest_memory: &GuestMemory) -> PageTableRoot {
+    if page_table
+        .translate_guest(VirtPageNum::from(GUEST_KERNEL_VIRT_START >> 12), guest_memory)
+        .is_some()
+    {
         return PageTableRoot::GVA
     }
     PageTableRoot::UVA
 }
 
-/// PR #35 (`fix-bug/non-ram-shadow-leaves`) maps only Guest RAM into shadow
-/// leaves. MMIO and other non-RAM GPAs remain invalid and trap to Hypocaust.
-fn shadow_leaf_pte(guest_pte: PageTableEntry, vm_id: VmId) -> PageTableEntry {
+fn checked_gpa_to_hpa(guest_memory: &GuestMemory, gpa: usize, len: usize) -> usize {
+    guest_memory
+        .translate_range(gpa, len)
+        .unwrap_or_else(|| panic!(
+            "Guest page-table range [{:#x}, {:#x}) is outside VM RAM",
+            gpa,
+            gpa.saturating_add(len),
+        ))
+}
+
+fn checked_gpa_to_shadow_hpa(guest_memory: &GuestMemory, gpa: usize, len: usize) -> usize {
+    guest_memory
+        .translate_shadow_range(gpa, len)
+        .unwrap_or_else(|| panic!(
+            "Guest page-table range [{:#x}, {:#x}) is outside the VM shadow slot",
+            gpa,
+            gpa.saturating_add(len),
+        ))
+}
+
+/// PR #35 (`fix-bug/non-ram-shadow-leaves`) keeps non-RAM leaves invalid.
+/// PR #36 (`feature/vm-guest-memory`) applies that policy through the owning
+/// VM's checked memory capability instead of global address bounds.
+fn shadow_leaf_pte(
+    guest_memory: &GuestMemory,
+    guest_pte: PageTableEntry,
+) -> PageTableEntry {
     let guest_page = guest_pte.ppn().0 << 12;
-    let page_in_ram = guest_page >= GUEST_KERNEL_VIRT_START
-        && guest_page
-            .checked_add(PAGE_SIZE)
-            .map_or(false, |end| end <= GUEST_KERNEL_VIRT_END);
-    if page_in_ram {
-        PageTableEntry::new(
-            PhysPageNum::from(gpa2hpa(guest_page, vm_id) >> 12),
+    match guest_memory.translate_range(guest_page, PAGE_SIZE) {
+        Some(host_page) => PageTableEntry::new(
+            PhysPageNum::from(host_page >> 12),
             guest_pte.flags() | PTEFlags::U,
-        )
-    } else {
-        PageTableEntry::empty()
+        ),
+        None => PageTableEntry::empty(),
     }
 }
 
@@ -267,7 +262,7 @@ fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, valid_pte_count: usize
 
 /// 收集所有页表的虚拟页号
 fn collect_page_table_pages<P: PageTable>(
-    vm_id: VmId,
+    guest_memory: &GuestMemory,
     satp: usize,
 ) -> Vec<GuestPageTablePageState> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
@@ -286,7 +281,9 @@ fn collect_page_table_pages<P: PageTable>(
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
             // 获得 guest pte 的物理页号
-            let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, vm_id) >> 12);
+            let guest_page_table_ppn = PhysPageNum::from(
+                checked_gpa_to_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
+            );
             // 获得 guest pte 页表项内容
             let guest_ptes = guest_page_table_ppn.get_pte_array();
             let mut valid_pte_count = 0;
@@ -314,7 +311,7 @@ fn collect_page_table_pages<P: PageTable>(
 }
 
 fn synchronize_page_table<P: PageTable>(
-    vm_id: VmId,
+    guest_memory: &GuestMemory,
     satp: usize,
 ) -> Vec<GuestPageTablePageState> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
@@ -332,9 +329,13 @@ fn synchronize_page_table<P: PageTable>(
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
             // 收集所有非叶子节点 `vpn`，用于设置为只读
-            let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, vm_id) >> 12);
+            let host_page_table_ppn = PhysPageNum::from(
+                checked_gpa_to_shadow_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
+            );
             // 获得 guest pte 的物理页号
-            let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, vm_id) >> 12);
+            let guest_page_table_ppn = PhysPageNum::from(
+                checked_gpa_to_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
+            );
             // 获得 guest pte 页表项内容
             let guest_ptes = guest_page_table_ppn.get_pte_array();
             // 获得 host pte 页表项内容
@@ -348,10 +349,15 @@ fn synchronize_page_table<P: PageTable>(
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
                     // 构造 host pte
-                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags());
+                    let host_pte = PageTableEntry::new(
+                        PhysPageNum::from(checked_gpa_to_shadow_hpa(
+                            guest_memory, guest_pte.ppn().0 << 12, PAGE_SIZE
+                        ) >> 12),
+                        guest_pte.flags(),
+                    );
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
-                    host_ptes[index] = shadow_leaf_pte(*guest_pte, vm_id);
+                    host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
             }
             page_table_pages.push(GuestPageTablePageState {
@@ -368,13 +374,13 @@ fn synchronize_page_table<P: PageTable>(
 
 /// 用于初始化影子页表同步所有页表项(仅在最开始时使用)
 fn initialize_shadow_page_table<P: PageTable>(
-    vm_id: VmId,
+    guest_memory: &GuestMemory,
     satp: usize,
     mode: PageTableRoot,
     guest_spt: Option<&mut P>,
 ) -> Option<(P, Vec<GuestPageTablePageState>)> {
     let guest_root_pa  = (satp & 0xfff_ffff_ffff) << 12;
-    let host_root_pa = gpt2spt(guest_root_pa, vm_id);
+    let host_root_pa = checked_gpa_to_shadow_hpa(guest_memory, guest_root_pa, PAGE_SIZE);
     // 获取 `guest SPT`
     let mut empty_spt = P::from_token(0);
     let guest_spt = match mode {
@@ -394,9 +400,13 @@ fn initialize_shadow_page_table<P: PageTable>(
         while !queue.is_empty() {
             // 获得 guest pte 的虚拟页号
             let guest_page_table_vpn = queue.pop_front().unwrap();
-            let host_page_table_ppn = PhysPageNum::from(gpt2spt(guest_page_table_vpn.0 << 12, vm_id) >> 12);
+            let host_page_table_ppn = PhysPageNum::from(
+                checked_gpa_to_shadow_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
+            );
             // 获得 guest pte 的物理页号
-            let guest_page_table_ppn = PhysPageNum::from(gpa2hpa(guest_page_table_vpn.0 << 12, vm_id) >> 12);
+            let guest_page_table_ppn = PhysPageNum::from(
+                checked_gpa_to_hpa(guest_memory, guest_page_table_vpn.0 << 12, PAGE_SIZE) >> 12
+            );
             // 获得 guest pte 页表项内容
             let guest_ptes = guest_page_table_ppn.get_pte_array();
             // 获得 host pte 页表项内容
@@ -410,10 +420,15 @@ fn initialize_shadow_page_table<P: PageTable>(
                     // 非叶子页表项
                     buffer.push(VirtPageNum::from(guest_pte.ppn().0));
                     // 构造 host pte
-                    let host_pte = PageTableEntry::new(PhysPageNum::from(gpt2spt(guest_pte.ppn().0 << 12, vm_id) >> 12) , guest_pte.flags());
+                    let host_pte = PageTableEntry::new(
+                        PhysPageNum::from(checked_gpa_to_shadow_hpa(
+                            guest_memory, guest_pte.ppn().0 << 12, PAGE_SIZE
+                        ) >> 12),
+                        guest_pte.flags(),
+                    );
                     host_ptes[index] = host_pte;
                 }else if guest_pte.is_valid() && walk == 2 {
-                    host_ptes[index] = shadow_leaf_pte(*guest_pte, vm_id);
+                    host_ptes[index] = shadow_leaf_pte(guest_memory, *guest_pte);
                 }
             }
             page_table_pages.push(GuestPageTablePageState {
@@ -500,13 +515,15 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         let mut full_walks = 0;
         let mut walked_page_table_pages = 0;
         let update;
-        let vm_id = self.vm_id;
+        let guest_memory = &self.guest_memory;
         // PR #25 (`feature/cache-shadow-page-table-state`) still classifies the
         // live root because a guest may reuse a root PPN; only freshness is cached.
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
-        let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, vm_id) >> 12);
+        let root_hppn = PhysPageNum::from(
+            checked_gpa_to_hpa(guest_memory, root_gpa, PAGE_SIZE) >> 12
+        );
         let gpt = P::from_ppn(root_hppn);
-        let mode = page_table_mode(gpt, vm_id);
+        let mode = page_table_mode(gpt, guest_memory);
         let requires_resynchronization = self.shadow_state.shadow_page_tables
             .requires_resynchronization(satp);
         if requires_resynchronization.is_none() {
@@ -516,7 +533,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             // 根据页表是否可读内核地址空间判断是 `GVA` 还是 `UVA`
             match mode {
                 PageTableRoot::GVA => {
-                    let initialized = initialize_shadow_page_table::<P>(vm_id, satp, mode, None).unwrap();
+                    let initialized = initialize_shadow_page_table::<P>(guest_memory, satp, mode, None).unwrap();
                     spt = initialized.0;
                     walked_page_table_pages += initialized.1.len();
                     full_walks += 1;
@@ -528,7 +545,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                 PageTableRoot::UVA => {
                     // 同步 guest spt,即将用户页表设置为只读
                     let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();   
-                    let initialized = initialize_shadow_page_table::<P>(vm_id, satp, mode, Some(guest_spt)).unwrap();
+                    let initialized = initialize_shadow_page_table::<P>(guest_memory, satp, mode, Some(guest_spt)).unwrap();
                     spt = initialized.0;
                     walked_page_table_pages += initialized.1.len();
                     full_walks += 1;
@@ -562,7 +579,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         // PR #25 (`feature/cache-shadow-page-table-state`) only
                         // revisits cached pages after a guest PTE was written.
                         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-                        let page_table_pages = collect_page_table_pages::<P>(vm_id, satp);
+                        let page_table_pages = collect_page_table_pages::<P>(guest_memory, satp);
                         walked_page_table_pages += page_table_pages.len();
                         full_walks += 1;
                         page_table_pages.iter().for_each(|page| {
@@ -576,7 +593,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                     update = ShadowPageTableUpdate::CachedUser;
                     if requires_resynchronization {
                         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
-                        let page_table_pages = collect_page_table_pages::<P>(vm_id, satp);
+                        let page_table_pages = collect_page_table_pages::<P>(guest_memory, satp);
                         walked_page_table_pages += page_table_pages.len();
                         full_walks += 1;
                         page_table_pages.iter().for_each(|page| {
@@ -584,7 +601,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         });
                         self.shadow_state.shadow_page_tables.record_page_table_pages(&page_table_pages);
                         // 需要更新用户态页表
-                        let synchronized_pages = synchronize_page_table::<P>(vm_id, satp);
+                        let synchronized_pages = synchronize_page_table::<P>(guest_memory, satp);
                         walked_page_table_pages += synchronized_pages.len();
                         full_walks += 1;
                         self.shadow_state.shadow_page_tables.record_page_table_pages(&synchronized_pages);
@@ -643,9 +660,13 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         old_pte: PageTableEntry,
         pte: PageTableEntry,
     ) {
-        let vm_id = self.vm_id;
+        let guest_memory = &self.guest_memory;
         // 获取对应影子页表的地址
-        let host_pa = gpt2spt(va, vm_id);
+        let host_pa = checked_gpa_to_shadow_hpa(
+            guest_memory,
+            va,
+            core::mem::size_of::<PageTableEntry>(),
+        );
         let host_ppn = PhysPageNum::from(host_pa >> 12);
         if va % core::mem::size_of::<PageTableEntry>() != 0 {
             panic!("Page Table Entry aligned?");
@@ -655,7 +676,10 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             .shadow_state
             .shadow_page_tables
             .update_valid_pte_count(page_vpn, old_pte, pte, || {
-                let guest_ppn = PhysPageNum::from(gpa2hpa(va, vm_id) >> 12);
+                let page_gpa = va & !(PAGE_SIZE - 1);
+                let guest_ppn = PhysPageNum::from(
+                    checked_gpa_to_hpa(guest_memory, page_gpa, PAGE_SIZE) >> 12
+                );
                 guest_ppn
                     .get_pte_array()
                     .iter()
@@ -676,7 +700,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             let pte_array = host_ppn.get_pte_array();
             if pte.is_valid() && (pte.readable() | pte.writable() | pte.executable()) {
                 // 叶子节点
-                pte_array[index] = shadow_leaf_pte(pte, vm_id);
+                pte_array[index] = shadow_leaf_pte(guest_memory, pte);
                 let vpn = VirtPageNum::from(va >> 12);
                 if let Some(pte) = guest_spt.translate(vpn) {
                     if pte.writable() | pte.executable() {
@@ -690,7 +714,11 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             }else if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
                 // 非叶子节点
                 // 获取非叶子节点的偏移
-                let new_ppn = PhysPageNum::from(gpt2spt(pte.ppn().0 << 12, vm_id) >> 12);
+                let new_ppn = PhysPageNum::from(
+                    checked_gpa_to_shadow_hpa(
+                        guest_memory, pte.ppn().0 << 12, PAGE_SIZE
+                    ) >> 12
+                );
                 let new_flags = pte.flags();
                 let new_pte = PageTableEntry::new(new_ppn, new_flags);
                 pte_array[index] = new_pte;

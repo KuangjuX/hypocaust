@@ -1,9 +1,9 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 
 use super::{PhysPageNum, StepByOne, VirtAddr, VirtPageNum, PTEFlags, PageTableEntry, PageTable, PageTableLevel, PteWrapper, PageWalk};
-use crate::guest::gpa2hpa;
+use crate::constants::layout::PAGE_SIZE;
+use crate::guest::GuestMemory;
 use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
-use crate::identity::VmId;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -86,7 +86,7 @@ impl PageTable for PageTableSv39 {
         result
     }
 
-    fn find_guest_pte(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<&mut PageTableEntry> {
+    fn find_guest_pte(&self, vpn: VirtPageNum, guest_memory: &GuestMemory) -> Option<&mut PageTableEntry> {
         let idxs = vpn.indexes();
         let mut ppn = self.root_ppn;
         let mut result: Option<&mut PageTableEntry> = None;
@@ -94,7 +94,8 @@ impl PageTable for PageTableSv39 {
             let pte;
             if i == 0{ pte = &mut ppn.get_pte_array()[*idx]; }
             else{ 
-                ppn = PhysPageNum::from(gpa2hpa(ppn.0 << 12, vm_id) >> 12);
+                let hpa = guest_memory.translate_range(ppn.0 << 12, PAGE_SIZE)?;
+                ppn = PhysPageNum::from(hpa >> 12);
                 pte = &mut ppn.get_pte_array()[*idx]; 
             }
             if i == 2 {
@@ -127,8 +128,8 @@ impl PageTable for PageTableSv39 {
     }
 
     #[allow(unused)]
-    fn translate_guest(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<PageTableEntry> {
-        self.find_guest_pte(vpn, vm_id).map(|pte| *pte)
+    fn translate_guest(&self, vpn: VirtPageNum, guest_memory: &GuestMemory) -> Option<PageTableEntry> {
+        self.find_guest_pte(vpn, guest_memory).map(|pte| *pte)
     }
 
     fn token(&self) -> usize {

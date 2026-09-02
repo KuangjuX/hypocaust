@@ -37,7 +37,7 @@ mod hypervisor;
 
 
 use crate::constants::layout::PAGE_SIZE;
-use crate::guest::{Vcpu, VirtualMachine};
+use crate::guest::VirtualMachine;
 use crate::hypervisor::HYPOCAUST;
 use crate::identity::{HartId, VcpuId, VmId};
 use crate::mm::MemorySet;
@@ -104,14 +104,20 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         hypervisor::initialize_vmm(meta);
         let mut hypervisor = HYPOCAUST.lock();
         let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
-        let guest_kernel_memory = MemorySet::new_guest_kernel(&GUEST_KERNEL);
+        let vm_id = VmId::new(0);
+        let vcpu_id = VcpuId::new(0);
+        let mut vm = VirtualMachine::new(vm_id);
+        // PR #36 (`feature/vm-guest-memory`) creates the VM-owned RAM slot
+        // before loading the Guest so every mapping uses the same capability.
+        let guest_kernel_memory =
+            MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
         // 初始化虚拟内存
         mm::vm_init(&guest_kernel_memory);
         hypervisor::trap::init();
         // 测试重映射
         mm::remap_test();
         // 测试 guest kernel 内存映射
-        mm::guest_kernel_test();
+        mm::guest_kernel_test(vm.guest_memory());
         // 开启时钟中断
         hypervisor::trap::enable_timer_interrupt();
         timer::set_default_next_trigger();
@@ -119,10 +125,7 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         let user_guest_kernel_memory = MemorySet::create_user_guest_kernel(&guest_kernel_memory);
         // PR #34 (`feature/vm-vcpu-identities`) models VM ownership independently from
         // the globally unique vCPU that happens to execute on this Host hart.
-        let vm_id = VmId::new(0);
-        let vcpu_id = VcpuId::new(0);
-        let mut vm = VirtualMachine::new(vm_id);
-        vm.add_vcpu(Vcpu::new(user_guest_kernel_memory, vm_id, vcpu_id));
+        vm.add_vcpu(user_guest_kernel_memory, vcpu_id);
         // 开始运行 guest kernel
         hypervisor.add_vm(vm);
         hypervisor.run_vcpu(vm_id, vcpu_id)

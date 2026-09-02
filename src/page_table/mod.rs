@@ -6,8 +6,7 @@ mod sv48;
 mod sv57;
 
 use alloc::vec::Vec;
-use crate::guest::gpa2hpa;
-use crate::identity::VmId;
+use crate::guest::GuestMemory;
 
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 // PR #16 (fix-bug/modern-rust-toolchain): preserve the module's public helpers
@@ -25,14 +24,14 @@ pub trait PageTable: Clone {
     fn root_ppn(&self) -> PhysPageNum;
     fn find_pte_create(&mut self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
     fn find_pte(&self, vpn: VirtPageNum) -> Option<&mut PageTableEntry>;
-    fn find_guest_pte(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<&mut PageTableEntry>;
+    fn find_guest_pte(&self, vpn: VirtPageNum, guest_memory: &GuestMemory) -> Option<&mut PageTableEntry>;
     #[allow(unused)]
     fn map(&mut self, vpn: VirtPageNum, ppn: PhysPageNum, flags: PTEFlags);
     #[allow(unused)]
     fn unmap(&mut self, vpn: VirtPageNum);
     fn translate(&self, vpn: VirtPageNum) -> Option<PageTableEntry>;
     #[allow(unused)]
-    fn translate_guest(&self, vpn: VirtPageNum, vm_id: VmId) -> Option<PageTableEntry>;
+    fn translate_guest(&self, vpn: VirtPageNum, guest_memory: &GuestMemory) -> Option<PageTableEntry>;
     fn token(&self) -> usize;
     /// page walk，并返回所有 `walk` 过的所有页表项
     fn walk_page_table<R: Fn(usize) -> usize>(root: usize, va: usize, read_pte: R) -> Option<PageWalk>;
@@ -92,12 +91,16 @@ pub struct AddressTranslation {
 
 /// 将 guest vaddr 翻译为 host paddr，并返回 `AddressTranslation`
 pub fn translate_guest_address<P: PageTable>(
-    vm_id: VmId,
+    guest_memory: &GuestMemory,
     root_page_table: usize,
     va: usize,
 ) -> Option<AddressTranslation> {
     P::walk_page_table(root_page_table, va, |va|{
-        let pa = gpa2hpa(va, vm_id);
+        // PR #36 (`feature/vm-guest-memory`) rejects a page-table walk that
+        // escapes the VM RAM slot instead of constructing an unchecked HPA.
+        let pa = guest_memory
+            .translate_range(va, core::mem::size_of::<usize>())
+            .expect("Guest page-table walk escaped VM RAM");
         unsafe{ core::ptr::read(pa as *const usize) }
     }).map(|t| {
         AddressTranslation {
