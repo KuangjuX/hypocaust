@@ -36,7 +36,7 @@ mod hypervisor;
 
 
 
-use crate::constants::layout::PAGE_SIZE;
+use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
 use crate::guest::VirtualMachine;
 use crate::hypervisor::HYPOCAUST;
 use crate::identity::{HartId, VcpuId, VmId};
@@ -52,11 +52,13 @@ static GUEST_KERNEL: [u8;include_bytes!("../guest_kernel").len()] =
  #[cfg(not(feature = "embed_guest_kernel"))]
  static GUEST_KERNEL: [u8; 0] = [];
 
- const BOOT_STACK_SIZE: usize = 16 * PAGE_SIZE;
+const HART_BOOT_STACK_SIZE: usize = 16 * PAGE_SIZE;
 
 #[link_section = ".bss.stack"]
-/// hypocaust boot stack
-static BOOT_STACK: [u8; BOOT_STACK_SIZE] = [0u8; BOOT_STACK_SIZE];
+/// PR #37 (`fix-bug/per-hart-boot-stacks`) reserves one non-overlapping early
+/// boot stack per supported Host hart.
+static BOOT_STACK: [u8; HART_BOOT_STACK_SIZE * MAX_HOST_HARTS] =
+    [0u8; HART_BOOT_STACK_SIZE * MAX_HOST_HARTS];
 
 #[link_section = ".text.entry"]
 #[export_name = "_start"]
@@ -66,16 +68,24 @@ static BOOT_STACK: [u8; BOOT_STACK_SIZE] = [0u8; BOOT_STACK_SIZE];
 /// hypocaust entrypoint
 pub unsafe extern "C" fn start() -> ! {
     core::arch::naked_asm!(
+        // Reject an out-of-range hart before calculating a stack pointer.
+        "li t4, {max_host_harts}",
+        "bgeu a0, t4, 2f",
         // prepare stack
         "la sp, {boot_stack}",
-        "li t2, {boot_stack_size}",
+        "li t2, {hart_boot_stack_size}",
         "addi t3, a0, 1",
         "mul t2, t2, t3",
         "add sp, sp, t2",
         // enter hentry
         "call hentry",
+        // Unsupported harts cannot safely enter Rust without a stack.
+        "2:",
+        "wfi",
+        "j 2b",
         boot_stack = sym BOOT_STACK,
-        boot_stack_size = const BOOT_STACK_SIZE,
+        hart_boot_stack_size = const HART_BOOT_STACK_SIZE,
+        max_host_harts = const MAX_HOST_HARTS,
     )
 }
 
@@ -130,6 +140,11 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
         hypervisor.add_vm(vm);
         hypervisor.run_vcpu(vm_id, vcpu_id)
     } else {
-        unreachable!()
+        // PR #37 (`fix-bug/per-hart-boot-stacks`) keeps firmware-started
+        // secondary harts on their own valid stack until scheduling is added.
+        hdebug!("park secondary hart {}", hart_id.index());
+        loop {
+            unsafe { core::arch::asm!("wfi") };
+        }
     }
 }

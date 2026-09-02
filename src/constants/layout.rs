@@ -8,6 +8,10 @@ pub const MEMORY_END: usize = 0x88000000;
 pub const PAGE_SIZE: usize = 0x1000;
 pub const PAGE_SIZE_BITS: usize = 0xc;
 
+// PR #37 (`fix-bug/per-hart-boot-stacks`) bounds early boot before any hart
+// computes a stack address from its firmware-provided physical ID.
+pub const MAX_HOST_HARTS: usize = 4;
+
 // PR #36 (`feature/vm-guest-memory`) defines three fixed VM RAM/shadow slots.
 // A later configuration PR will derive these regions from platform resources.
 pub const VM_MEMORY_SLOT_SIZE: usize = 128 * 1024 * 1024;
