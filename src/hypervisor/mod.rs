@@ -231,6 +231,7 @@ pub fn initialize_vmm(meta: MachineMeta) {
     // enter the scheduler and make a failure harder to diagnose.
     scheduler::self_test();
     crate::guest::virtual_interrupt_self_test();
+    crate::guest::payload_self_test();
     crate::page_table::translation_self_test();
     crate::device_emu::passthrough_self_test();
     crate::device_emu::console_self_test();

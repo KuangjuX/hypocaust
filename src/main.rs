@@ -38,10 +38,12 @@ mod hypervisor;
 
 use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
 use crate::device_emu::DeviceBusConfig;
-use crate::guest::{install_guest_fdt, VcpuBootConfig, VirtualMachine, VmConfig};
+use crate::guest::{
+    install_guest_fdt, GuestPayload, VcpuBootConfig, VirtualMachine, VmConfig,
+};
 use crate::hypervisor::{HYPOCAUST, HYPERVISOR_MEMORY};
 use crate::identity::{GuestHartId, HartId, VcpuId, VmId};
-use crate::mm::MemorySet;
+use crate::mm::{LoadedGuestKernel, MemorySet};
 
 // use fdt::Fdt;
 
@@ -147,8 +149,15 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
                 let mut vm = VirtualMachine::new(config);
                 // PR #45 loads the same example kernel into disjoint VM-owned
                 // RAM slots; no Guest page can alias another VM's memory.
-                let guest_kernel_memory =
-                    MemorySet::new_guest_kernel(&GUEST_KERNEL, vm.guest_memory());
+                // PR #51 (`feature/linux-image-loader`) detects the embedded
+                // payload once per VM and carries its real entry point through
+                // vCPU construction instead of assuming the xv6-rust address.
+                let payload = GuestPayload::detect(&GUEST_KERNEL)
+                    .expect("embedded Guest payload is neither ELF nor Linux Image");
+                let LoadedGuestKernel {
+                    memory_set: guest_kernel_memory,
+                    entry_gpa,
+                } = MemorySet::load_guest_kernel(payload, vm.guest_memory());
                 mm::vm_init(&guest_kernel_memory);
                 mm::guest_kernel_test(vm.guest_memory());
                 let guest_fdt = install_guest_fdt(vm.guest_memory(), guest_hart_id);
@@ -157,7 +166,7 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
                 vm.add_vcpu(
                     user_guest_kernel_memory,
                     vcpu_id,
-                    VcpuBootConfig::new(guest_hart_id, guest_fdt),
+                    VcpuBootConfig::new(guest_hart_id, guest_fdt, entry_gpa),
                 );
                 hdebug!(
                     "configured VM {} with VirtIO backend {:#x} and DTB {:#x}",
