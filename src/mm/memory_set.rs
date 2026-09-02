@@ -2,7 +2,7 @@
 
 use crate::hypervisor::hyp_alloc::{FrameTracker, frame_alloc};
 use crate::hypervisor::HYPERVISOR_MEMORY;
-use crate::guest::GuestMemory;
+use crate::guest::{GuestMemory, GuestPayload, LinuxImage};
 use crate::page_table::{PTEFlags, PageTable, PageTableEntry};
 use crate::page_table::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use crate::page_table::{StepByOne, VPNRange, PPNRange};
@@ -36,6 +36,15 @@ extern "C" {
 pub struct MemorySet<P: PageTable> {
     page_table: P,
     areas: Vec<MapArea<P>>,
+}
+
+/// Result of loading a Guest payload into one VM-owned RAM slot.
+///
+/// PR #51 (`feature/linux-image-loader`) returns the architectural entry point
+/// together with its mappings so vCPU construction never assumes `0x80000000`.
+pub struct LoadedGuestKernel<P: PageTable> {
+    pub memory_set: MemorySet<P>,
+    pub entry_gpa: usize,
 }
 
 impl<P> MemorySet<P> where P: PageTable {
@@ -219,11 +228,28 @@ impl<P> MemorySet<P> where P: PageTable {
         memory_set
     }
 
-    pub fn new_guest_kernel(guest_kernel_data: &[u8], guest_memory: &GuestMemory) -> Self {
+    /// Load either the existing xv6-rust ELF payload or a standard little-endian
+    /// RISC-V Linux Image into the VM's checked RAM capability.
+    pub fn load_guest_kernel(
+        payload: GuestPayload<'_>,
+        guest_memory: &GuestMemory,
+    ) -> LoadedGuestKernel<P> {
         // PR #44 (`fix-bug/map-guest-ram-before-load`) installs this VM's Host
         // RAM mapping before copying its ELF. VM 0 used to work only because
         // it was loaded while the Host still ran with `satp=0`; VM 1 faulted.
         prepare_guest_memory(guest_memory);
+        match payload {
+            GuestPayload::Elf(bytes) => Self::load_elf_guest_kernel(bytes, guest_memory),
+            GuestPayload::LinuxImage(image) => {
+                Self::load_linux_guest_kernel(image, guest_memory)
+            }
+        }
+    }
+
+    fn load_elf_guest_kernel(
+        guest_kernel_data: &[u8],
+        guest_memory: &GuestMemory,
+    ) -> LoadedGuestKernel<P> {
         let mut memory_set = Self::new_bare();
         let elf = xmas_elf::ElfFile::new(guest_kernel_data).unwrap();
         let elf_header = elf.header;
@@ -318,7 +344,61 @@ impl<P> MemorySet<P> where P: PageTable {
             None
         );
 
-        memory_set
+        let entry_gpa = elf.header.pt2.entry_point() as usize;
+        assert!(
+            guest_memory.contains_gpa(entry_gpa),
+            "Guest ELF entry point is outside VM RAM",
+        );
+        LoadedGuestKernel {
+            memory_set,
+            entry_gpa,
+        }
+    }
+
+    /// PR #51 follows the Linux Image header rather than hard-coding a load
+    /// address. With paging disabled, the complete RAM slot is executable and
+    /// writable just like supervisor physical memory; Linux installs its own
+    /// finer-grained permissions when it enables Sv39.
+    fn load_linux_guest_kernel(
+        image: LinuxImage<'_>,
+        guest_memory: &GuestMemory,
+    ) -> LoadedGuestKernel<P> {
+        let text_offset = usize::try_from(image.text_offset())
+            .expect("Linux Image text offset does not fit the Host address size");
+        let image_size = usize::try_from(image.image_size())
+            .expect("Linux Image size does not fit the Host address size");
+        let occupied_size = image_size.max(image.bytes().len());
+        let entry_gpa = guest_memory
+            .guest_base()
+            .checked_add(text_offset)
+            .expect("Linux Image load address overflow");
+        let image_hpa = guest_memory
+            .translate_range(entry_gpa, occupied_size)
+            .expect("Linux Image does not fit in VM RAM");
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                image.bytes().as_ptr(),
+                image_hpa as *mut u8,
+                image.bytes().len(),
+            );
+        }
+
+        let mut memory_set = Self::new_bare();
+        memory_set.push(
+            MapArea::new(
+                VirtAddr::from(guest_memory.guest_base()),
+                VirtAddr::from(guest_memory.guest_end()),
+                Some(PhysAddr::from(guest_memory.host_base())),
+                Some(PhysAddr::from(guest_memory.host_end())),
+                MapType::Linear,
+                MapPermission::R | MapPermission::W | MapPermission::X,
+            ),
+            None,
+        );
+        LoadedGuestKernel {
+            memory_set,
+            entry_gpa,
+        }
     }
 
     /// 加载客户操作系统

@@ -9,7 +9,7 @@ use crate::page_table::{VirtAddr, PhysPageNum, PageTable};
 use crate::mm::{MemorySet, MapPermission};
 use crate::hypervisor::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{
-    GUEST_KERNEL_VIRT_START, MAX_HOST_HARTS, TRAP_CONTEXT, kernel_stack_position,
+    MAX_HOST_HARTS, TRAP_CONTEXT, kernel_stack_position,
 };
 use crate::constants::csr;
 use crate::device_emu::{DeviceBus, DeviceBusConfig};
@@ -21,6 +21,7 @@ pub mod context;
 mod fdt;
 mod pmap;
 mod memory;
+mod payload;
 mod shadow_stats;
 pub mod sbi;
 
@@ -30,6 +31,8 @@ use riscv::addr::BitField;
 pub use self::context::{ShadowState, VirtualInterrupt};
 pub(crate) use self::context::virtual_interrupt_self_test;
 pub use self::memory::GuestMemory;
+pub use self::payload::{GuestPayload, LinuxImage};
+pub(crate) use self::payload::self_test as payload_self_test;
 pub(crate) use self::fdt::install_guest_fdt;
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
@@ -56,17 +59,25 @@ impl VmConfig {
 
 /// PR #45 (`feature/multi-guest-qemu`) carries the RISC-V boot arguments that
 /// belong to one vCPU rather than deriving them from Host scheduler identity.
+/// PR #51 (`feature/linux-image-loader`) adds the payload-selected entry GPA;
+/// Linux starts at its Image header while xv6-rust uses its ELF entry point.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VcpuBootConfig {
     pub guest_hart_id: GuestHartId,
     pub device_tree_gpa: usize,
+    pub entry_gpa: usize,
 }
 
 impl VcpuBootConfig {
-    pub const fn new(guest_hart_id: GuestHartId, device_tree_gpa: usize) -> Self {
+    pub const fn new(
+        guest_hart_id: GuestHartId,
+        device_tree_gpa: usize,
+        entry_gpa: usize,
+    ) -> Self {
         Self {
             guest_hart_id,
             device_tree_gpa,
+            entry_gpa,
         }
     }
 }
@@ -221,7 +232,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         // 获取中断上下文的地址
         let trap_cx : &mut TrapContext = vcpu.trap_cx_ppn.get_mut();
         *trap_cx = TrapContext::app_init_context(
-            GUEST_KERNEL_VIRT_START,
+            boot.entry_gpa,
             0,
             hypervisor_memory.token(),
             kernel_stack_top,
