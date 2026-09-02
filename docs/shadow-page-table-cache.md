@@ -1,7 +1,7 @@
 # Shadow page-table synchronization cache
 
-The cache added by `feature/cache-shadow-page-table-state` avoids rebuilding
-the same synchronization evidence on every cached `satp` switch.
+The cache added by PR #25 (`feature/cache-shadow-page-table-state`) avoids
+rebuilding the same synchronization evidence on every cached `satp` switch.
 
 ## Consistency model
 

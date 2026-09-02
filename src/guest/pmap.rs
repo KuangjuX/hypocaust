@@ -31,6 +31,8 @@ pub enum PageTableRoot {
     UVA
 }
 
+/// PR #25 (`feature/cache-shadow-page-table-state`) couples each shadow root
+/// with the guest PTE generation for which its full synchronization is valid.
 struct CachedShadowPageTable<P: PageTable + PageDebug> {
     page_table: P,
     synchronized_generation: usize,
@@ -43,8 +45,8 @@ pub struct ShadowPageTables<P: PageTable + PageDebug> {
     pub page_tables: [Option<usize>; 3],
     /// kernel guest page table token
     pub guest_satp: Option<usize>,
-    /// `feature/cache-shadow-page-table-state` increments this generation for
-    /// every trapped guest PTE write so cached roots can detect stale state.
+    /// PR #25 (`feature/cache-shadow-page-table-state`) increments this
+    /// generation on trapped guest PTE writes so cached roots detect stale state.
     pte_generation: usize,
 }
 
@@ -377,8 +379,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         let mut walked_page_table_pages = 0;
         let update;
         let hart_id = self.guest_id;
-        // Preserve the original mode classification on every switch. A guest
-        // may reuse a root PPN, so only synchronization state is cached.
+        // PR #25 (`feature/cache-shadow-page-table-state`) still classifies the
+        // live root because a guest may reuse a root PPN; only freshness is cached.
         let root_gpa = (satp & 0xfff_ffff_ffff) << 12;
         let root_hppn = PhysPageNum::from(gpa2hpa(root_gpa, hart_id) >> 12);
         let gpt = P::from_ppn(root_hppn);
@@ -433,8 +435,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                     // os 的内存映射几乎不会改变,因此在切换页表时不需要同步
                     self.shadow_state.conseutive_satp_switch_count += 1;
                     if requires_resynchronization {
-                        // `feature/cache-shadow-page-table-state` only revisits
-                        // cached page-table pages after a guest PTE was written.
+                        // PR #25 (`feature/cache-shadow-page-table-state`) only
+                        // revisits cached pages after a guest PTE was written.
                         let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
                         let page_table_vpns = collect_page_table_vpns::<P>(hart_id, satp);
                         walked_page_table_pages += page_table_vpns.len();
@@ -559,8 +561,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 }
             }
         }
-        // `feature/cache-shadow-page-table-state` invalidates every cached
-        // root conservatively; each root resynchronizes at most once per write.
+        // PR #25 (`feature/cache-shadow-page-table-state`) invalidates every
+        // cached root conservatively; each root resynchronizes at most once per write.
         self.shadow_state.shadow_page_tables.record_pte_write();
         // PR #24 (`feature/shadow-paging-profile`) distinguishes incremental
         // updates from the 512-entry scan performed when a PTE is invalidated.
