@@ -1,8 +1,8 @@
 //! Lightweight counters for measuring software shadow-paging overhead.
 //!
-//! This instrumentation belongs to `feature/shadow-paging-profile`. It keeps
-//! serial output out of the measured section and reports only periodically so
-//! the profiler does not dominate the cost it is intended to observe.
+//! PR #24 (`feature/shadow-paging-profile`) adds this instrumentation. It
+//! keeps serial output out of the measured section and reports only
+//! periodically so the profiler does not dominate the cost it observes.
 
 const REPORT_INTERVAL: usize = 1024;
 

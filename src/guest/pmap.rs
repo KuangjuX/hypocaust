@@ -342,8 +342,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     /// 根据 satp 构建影子页表
     /// 需要将 GVA -> HPA
     pub fn make_shadow_page_table(&mut self, satp: usize) {
-        // `feature/shadow-paging-profile` measures the complete shadow update,
-        // including cache lookup, page-table walks, and special-page mappings.
+        // PR #24 (`feature/shadow-paging-profile`) measures the complete shadow
+        // update, including cache lookup, walks, and special-page mappings.
         let start_cycles = read_cycle();
         let mut full_walks = 0;
         let mut walked_page_table_pages = 0;
@@ -524,8 +524,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                 }
             }
         }
-        // `feature/shadow-paging-profile` distinguishes incremental updates
-        // from the 512-entry validity scan performed when a PTE is invalidated.
+        // PR #24 (`feature/shadow-paging-profile`) distinguishes incremental
+        // updates from the 512-entry scan performed when a PTE is invalidated.
         self.shadow_state.shadow_paging_stats.record_pte_update(invalidation_scan);
     }
 

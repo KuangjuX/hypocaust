@@ -55,8 +55,8 @@ pub struct ShadowState<P: PageTable + PageDebug> {
     pub interrupt: bool,
     /// 连续切换页表次数
     pub conseutive_satp_switch_count: usize,
-    /// `feature/shadow-paging-profile` records the work performed while
-    /// maintaining shadow page tables so later optimization PRs have a baseline.
+    /// PR #24 (`feature/shadow-paging-profile`) records the work performed
+    /// while maintaining shadow page tables so later optimization PRs have a baseline.
     pub shadow_paging_stats: ShadowPagingStats,
 }
 
