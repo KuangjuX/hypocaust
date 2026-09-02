@@ -90,7 +90,7 @@ pub fn trap_handler() -> ! {
         Trap::Exception(Exception::Breakpoint) => { 
             ifault(guest, ctx);
         }
-        // PR fix-bug/virtio-dma-translation: VirtIO register reads fault by
+        // PR #17 (fix-bug/virtio-dma-translation): VirtIO reads fault by
         // design and must enter the same MMIO emulator as register writes.
         Trap::Exception(Exception::LoadPageFault) |
         Trap::Exception(Exception::StorePageFault) => {

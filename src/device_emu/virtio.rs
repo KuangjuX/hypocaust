@@ -1,6 +1,6 @@
 //! refs: https://github.com/mit-pdos/RVirt/blob/HEAD/src/virtio.rs
 //!
-//! PR fix-bug/virtio-dma-translation: intercept legacy VirtIO MMIO queue
+//! PR #17 (fix-bug/virtio-dma-translation): intercept legacy VirtIO MMIO queue
 //! setup and notifications, translating guest queue/descriptor addresses to
 //! host physical addresses before the passthrough QEMU device performs DMA.
 
