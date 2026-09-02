@@ -2,7 +2,7 @@ mod uart;
 mod plic;
 mod virtio;
 pub use uart::Uart;
-// PR fix-bug/modern-rust-toolchain: keep device types available to the module
+// PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
 pub use plic::HostPlic;

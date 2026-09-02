@@ -6,7 +6,7 @@ use core::panic::PanicInfo;
 #[panic_handler]
 /// panic handler
 fn panic(info: &PanicInfo) -> ! {
-    // PR fix-bug/modern-rust-toolchain: PanicMessage now implements Display
+    // PR #16 (fix-bug/modern-rust-toolchain): PanicMessage implements Display
     // directly, so reporting works without the removed Option-like API.
     if let Some(location) = info.location() {
         println!(

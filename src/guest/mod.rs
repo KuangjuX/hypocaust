@@ -20,7 +20,7 @@ use context::TaskContext;
 use riscv::addr::BitField;
 
 pub use self::context::ShadowState;
-// PR fix-bug/modern-rust-toolchain: retain these public translation helpers
+// PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
 #[allow(unused_imports)]
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
