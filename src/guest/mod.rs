@@ -34,6 +34,13 @@ pub use self::memory::GuestMemory;
 pub use self::payload::{GuestPayload, LinuxImage};
 pub(crate) use self::payload::self_test as payload_self_test;
 pub(crate) use self::fdt::install_guest_fdt;
+// PR #52 (`feature/linux-guest-fdt`) exposes a policy-neutral FDT interface for
+// the later Linux initramfs example while the current xv6 path keeps its simple
+// compatibility wrapper above.
+#[allow(unused_imports)]
+pub(crate) use self::fdt::{
+    install_configured_guest_fdt, GuestFdtConfig, GuestInitrdRange,
+};
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
 #[allow(unused_imports)]
