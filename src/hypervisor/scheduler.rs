@@ -1,7 +1,7 @@
 use alloc::collections::{BTreeMap, VecDeque};
 
 use crate::constants::layout::MAX_HOST_HARTS;
-use crate::identity::{HartId, VcpuId, VcpuKey};
+use crate::identity::{HartId, VcpuId, VcpuKey, VmId};
 
 /// PR #38 (`feature/multivcpu-scheduler`) keeps vCPU lifecycle state in one
 /// scheduler so a vCPU cannot be running on two Host harts simultaneously.
@@ -10,6 +10,9 @@ pub enum VcpuRunState {
     Ready,
     Running(HartId),
     Blocked,
+    /// PR #55 (`fix-bug/guest-shutdown-isolation`) makes shutdown terminal:
+    /// device interrupts must never wake a vCPU after its VM has stopped.
+    Stopped,
 }
 
 pub struct Scheduler {
@@ -45,18 +48,12 @@ impl Scheduler {
     }
 
     pub fn current(&self, hart_id: HartId) -> Option<VcpuKey> {
-        self.current
-            .get(hart_id.index())
-            .copied()
-            .flatten()
+        self.current.get(hart_id.index()).copied().flatten()
     }
 
     pub fn schedule(&mut self, hart_id: HartId) -> Option<VcpuKey> {
         assert!(
-            self.online
-                .get(hart_id.index())
-                .copied()
-                .unwrap_or(false),
+            self.online.get(hart_id.index()).copied().unwrap_or(false),
             "cannot schedule work on an offline Host hart",
         );
         let slot = self
@@ -93,6 +90,31 @@ impl Scheduler {
         self.schedule(hart_id)
     }
 
+    /// Stop every vCPU belonging to the current VM, then select unrelated work.
+    ///
+    /// PR #55 removes stopped entries from the ready queue and gives them a
+    /// terminal state. The current implementation has one vCPU per VM; the
+    /// assertion prevents a future SMP VM from being partially stopped until
+    /// cross-hart stop coordination is implemented explicitly.
+    pub fn stop_current_vm(&mut self, hart_id: HartId) -> (VmId, Option<VcpuKey>) {
+        let current = self
+            .take_current(hart_id)
+            .expect("Host hart has no VM to stop");
+        let vm_id = current.vm_id;
+        for (key, state) in self.states.values_mut() {
+            if key.vm_id != vm_id {
+                continue;
+            }
+            assert!(
+                !matches!(*state, VcpuRunState::Running(owner) if owner != hart_id),
+                "stopping a VM with a vCPU running on another Host hart is unsupported",
+            );
+            *state = VcpuRunState::Stopped;
+        }
+        self.run_queue.retain(|key| key.vm_id != vm_id);
+        (vm_id, self.schedule(hart_id))
+    }
+
     /// Make a blocked vCPU runnable and return an idle hart that should receive
     /// an SBI IPI. A running or already-ready vCPU is left unchanged.
     pub fn wake(&mut self, key: VcpuKey) -> Option<HartId> {
@@ -124,7 +146,7 @@ impl Scheduler {
         match *state {
             VcpuRunState::Running(hart_id) => Some(hart_id),
             VcpuRunState::Blocked => self.wake(key),
-            VcpuRunState::Ready => None,
+            VcpuRunState::Ready | VcpuRunState::Stopped => None,
         }
     }
 
@@ -155,4 +177,17 @@ pub fn self_test() {
     assert_eq!(scheduler.interrupt_target(second), Some(HartId::new(1)));
     assert_eq!(scheduler.schedule(HartId::new(1)), Some(second));
     assert_eq!(scheduler.preempt(HartId::new(0)), Some(first));
+
+    // PR #55 verifies that stopping VM 0 selects VM 1 and that a later device
+    // interrupt cannot resurrect the terminal VM 0 vCPU.
+    let mut shutdown_scheduler = Scheduler::new();
+    shutdown_scheduler.mark_hart_online(HartId::new(0));
+    shutdown_scheduler.register(first);
+    shutdown_scheduler.register(second);
+    assert_eq!(shutdown_scheduler.schedule(HartId::new(0)), Some(first));
+    assert_eq!(
+        shutdown_scheduler.stop_current_vm(HartId::new(0)),
+        (first.vm_id, Some(second)),
+    );
+    assert_eq!(shutdown_scheduler.interrupt_target(first), None);
 }

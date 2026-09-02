@@ -29,7 +29,7 @@ use riscv::register::{
     sie, stval, stvec, sepc, sscratch
 };
 pub use context::TrapContext;
-use self::inst_fault::{ifault, decode_instruction_at_address};
+use self::inst_fault::{decode_instruction_at_address, ifault, InstructionOutcome};
 use self::page_fault::handle_page_fault;
 use self::device::{handle_device_mmio, handle_time_interrupt, poll_device_completions};
 use self::forward::{forward_exception, maybe_forward_interrupt};
@@ -142,7 +142,19 @@ pub fn trap_handler() -> ! {
         TrapRoute::EmulateInstruction => {
             // PR #49 (`feature/per-vm-console`) supplies the owning bus so
             // legacy SBI console calls use VM-local frontend state.
-            ifault(guest, device_bus, ctx);
+            let outcome = ifault(guest, device_bus, ctx);
+            if matches!(outcome, InstructionOutcome::StopCurrentVm) {
+                // PR #55 removes only the caller's VM from scheduling. A
+                // different Guest may immediately reuse this Host hart.
+                let (vm_id, next) = hypervisor.stop_current_vm(hart_id);
+                hdebug!("VM {} stopped by Guest SBI", vm_id.index());
+                if next.is_none() {
+                    // No Guest context exists for trap_return. Re-enter the
+                    // scheduler so the Host hart idles until work is added.
+                    drop(hypervisor_guard);
+                    crate::hypervisor::run_scheduler(hart_id);
+                }
+            }
             false
         },
         // PR #17 (fix-bug/virtio-dma-translation): VirtIO reads fault by
