@@ -1,33 +1,93 @@
 mod uart;
 mod plic;
 mod virtio;
+use alloc::sync::Arc;
+
+use crate::guest::GuestMemory;
 use crate::identity::VmId;
 pub use uart::Uart;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
 pub use plic::HostPlic;
-#[allow(unused_imports)]
-pub use virtio::{ VirtIO, is_device_access };
+pub use virtio::VirtIO;
 
+const QEMU_TEST_GPA: usize = 0x0010_0000;
+const QEMU_TEST_HPA: usize = 0x0010_0000;
+const QEMU_TEST_SIZE: usize = 0x1000;
+const VIRTIO_BLOCK_GPA: usize = 0x1000_1000;
+const VIRTIO_BLOCK_HPA: usize = 0x1000_1000;
 
-/// Software emulated device used in VMM
-pub struct VirtDevice {
-    pub qemu_virt_tester: qemu_virt::QemuVirtTester,
-    /// PR #17 (fix-bug/virtio-dma-translation): per-guest VirtIO MMIO/DMA state.
-    pub virtio: VirtIO,
-    pub uart: Uart
+/// PR #39 (`feature/per-vm-device-bus`) is the VM-owned MMIO routing boundary.
+/// All vCPUs in one VM therefore observe the same device and queue state.
+pub struct DeviceBus {
+    guest_memory: Arc<GuestMemory>,
+    qemu_virt_tester: qemu_virt::QemuVirtTester,
+    virtio: VirtIO,
+    pub uart: Uart,
 }
 
-impl VirtDevice {
-    pub fn new(vm_id: VmId) -> Self {
-        Self { 
-            qemu_virt_tester: qemu_virt::QemuVirtTester::new(),
-            virtio: VirtIO::new(0x1000_1000),
-            uart: Uart::new(vm_id)
-        }
+impl DeviceBus {
+    pub fn new(vm_id: VmId, guest_memory: Arc<GuestMemory>) -> Self {
+        // PR #39 deliberately rejects implicit sharing of the one physical
+        // QEMU device set. Later VM configurations must choose emulation or an
+        // explicitly assigned Host backend instead of aliasing passthrough.
+        assert_eq!(
+            vm_id,
+            VmId::new(0),
+            "the default QEMU passthrough bus is reserved for VM 0",
+        );
+        let bus = Self {
+            guest_memory,
+            qemu_virt_tester: qemu_virt::QemuVirtTester::new(
+                QEMU_TEST_GPA,
+                QEMU_TEST_HPA,
+                QEMU_TEST_SIZE,
+            ),
+            // PR #39 records Guest and Host addresses separately. VM 0 keeps
+            // today's identity mapping until configurable backends are added.
+            virtio: VirtIO::new(VIRTIO_BLOCK_GPA, VIRTIO_BLOCK_HPA),
+            uart: Uart::new(vm_id),
+        };
+        assert!(
+            !bus.virtio.contains(QEMU_TEST_GPA)
+                && !bus.qemu_virt_tester.contains(VIRTIO_BLOCK_GPA),
+            "VM device regions overlap",
+        );
+        bus
     }
 
+    /// PR #39 centralizes the MMIO membership test instead of using global
+    /// address predicates that cannot distinguish one VM's devices.
+    pub fn contains(&self, guest_address: usize) -> bool {
+        self.virtio.contains(guest_address)
+            || self.qemu_virt_tester.contains(guest_address)
+    }
+
+    /// PR #39 performs a 32-bit read only when this VM owns the address.
+    pub fn read_u32(&self, guest_address: usize) -> Option<u32> {
+        if self.virtio.contains(guest_address) {
+            return Some(self.virtio.read(guest_address));
+        }
+        if self.qemu_virt_tester.contains(guest_address) {
+            return Some(self.qemu_virt_tester.read(guest_address));
+        }
+        None
+    }
+
+    /// PR #39 performs a 32-bit write only when this VM owns the address.
+    pub fn write_u32(&mut self, guest_address: usize, value: u32) -> bool {
+        if self.virtio.contains(guest_address) {
+            self.virtio
+                .write(guest_address, value, &self.guest_memory);
+            return true;
+        }
+        if self.qemu_virt_tester.contains(guest_address) {
+            self.qemu_virt_tester.write(guest_address, value);
+            return true;
+        }
+        false
+    }
 }
 
 
@@ -36,22 +96,36 @@ mod qemu_virt {
     use crate::mm::MemoryRegion;
     /// Software emulated qemu virt test
     pub struct QemuVirtTester {
-        pub mmregs: MemoryRegion<u32>
+        guest_base: usize,
+        host_registers: MemoryRegion<u32>,
     }
 
     impl QemuVirtTester {
-        pub fn new() -> Self {
-            Self { 
-                mmregs: MemoryRegion::new(0x10_0000, 0x1000)
+        pub fn new(guest_base: usize, host_base: usize, size: usize) -> Self {
+            Self {
+                guest_base,
+                host_registers: MemoryRegion::new(host_base, size),
             }
         }
 
-        pub fn in_region(&self, addr: usize) -> bool {
-            self.mmregs.in_region(addr)
+        pub fn contains(&self, addr: usize) -> bool {
+            addr >= self.guest_base && addr - self.guest_base < self.host_registers.len()
         }
 
-        pub fn base(&self) -> usize {
-            self.mmregs.base()
+        pub fn read(&self, addr: usize) -> u32 {
+            self.host_registers[self.host_address(addr)]
+        }
+
+        pub fn write(&mut self, addr: usize, value: u32) {
+            let host_address = self.host_address(addr);
+            self.host_registers[host_address] = value;
+        }
+
+        /// PR #39 translates the VM-visible register offset into the assigned
+        /// Host MMIO aperture instead of treating both address spaces as one.
+        fn host_address(&self, guest_address: usize) -> usize {
+            assert!(self.contains(guest_address));
+            self.host_registers.base() + (guest_address - self.guest_base)
         }
     }
 }

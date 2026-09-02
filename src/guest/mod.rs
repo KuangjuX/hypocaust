@@ -11,7 +11,7 @@ use crate::mm::{MemorySet, MapPermission};
 use crate::hypervisor::trap::{TrapContext, trap_handler};
 use crate::constants::layout::{TRAP_CONTEXT, kernel_stack_position, GUEST_KERNEL_VIRT_START};
 use crate::constants::csr;
-use crate::device_emu::VirtDevice;
+use crate::device_emu::DeviceBus;
 use crate::identity::{VcpuId, VmId};
 
 
@@ -33,11 +33,13 @@ pub use self::memory::GuestMemory;
 pub use self::pmap::{ShadowPageTables, PageTableRoot};
 
 /// PR #34 (`feature/vm-vcpu-identities`) makes a VM the ownership boundary for vCPUs.
-/// PR #36 (`feature/vm-guest-memory`) moves Guest RAM here; virtual devices
-/// follow in a later multi-Guest PR.
+/// PR #36 (`feature/vm-guest-memory`) moves Guest RAM here.
+/// PR #39 (`feature/per-vm-device-bus`) makes devices part of the same VM
+/// ownership boundary so all of its vCPUs share one coherent bus.
 pub struct VirtualMachine<P: PageTable + PageDebug> {
     pub id: VmId,
     guest_memory: Arc<GuestMemory>,
+    device_bus: DeviceBus,
     vcpus: Vec<Vcpu<P>>,
 }
 
@@ -46,13 +48,17 @@ where
     P: PageDebug + PageTable,
 {
     pub fn new(id: VmId) -> Self {
+        let guest_memory = Arc::new(
+            GuestMemory::for_vm(id).expect("VM has no Guest memory slot"),
+        );
         Self {
             id,
             // PR #36 (`feature/vm-guest-memory`) makes the VM own the RAM
             // capability shared by its vCPUs and checked translation clients.
-            guest_memory: Arc::new(
-                GuestMemory::for_vm(id).expect("VM has no Guest memory slot"),
-            ),
+            guest_memory: Arc::clone(&guest_memory),
+            // PR #39 (`feature/per-vm-device-bus`) gives every vCPU in this VM
+            // one shared MMIO namespace and coherent device state.
+            device_bus: DeviceBus::new(id, guest_memory),
             vcpus: Vec::new(),
         }
     }
@@ -71,6 +77,16 @@ where
 
     pub fn guest_memory(&self) -> &GuestMemory {
         &self.guest_memory
+    }
+
+    /// PR #39 returns disjoint mutable references to VM-owned CPU and device
+    /// state for one emulated MMIO instruction.
+    pub fn vcpu_and_device_bus_mut(
+        &mut self,
+        id: VcpuId,
+    ) -> Option<(&mut Vcpu<P>, &mut DeviceBus)> {
+        let vcpu = self.vcpus.iter_mut().find(|vcpu| vcpu.id == id)?;
+        Some((vcpu, &mut self.device_bus))
     }
 
     pub fn vcpu(&self, id: VcpuId) -> Option<&Vcpu<P>> {
@@ -101,8 +117,6 @@ pub struct Vcpu<P: PageTable + PageDebug> {
     /// PR #18 (fix-bug/smode-interrupt-forwarding): current virtual privilege mode.
     /// This is separate from sstatus.SPP, which records the mode before a trap.
     pub smode: bool,
-    /// Virtual emulated device in qemu
-    pub virt_device: VirtDevice,
 }
 
 impl<P> Vcpu<P> where P: PageDebug + PageTable {
@@ -131,7 +145,6 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             id,
             guest_memory,
             smode: true,
-            virt_device: VirtDevice::new(vm_id),
         };
         // 设置 Guest OS `sstatus` 的 `SPP`
         let mut sstatus = riscv::register::sstatus::read();
