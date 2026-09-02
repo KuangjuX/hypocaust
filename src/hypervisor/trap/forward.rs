@@ -13,9 +13,15 @@ use super::TrapContext;
 pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
     // 没有发生中断，返回
     if !guest.shadow_state.interrupt { return }
+    let guest_was_in_smode = guest.smode;
     let state = &mut guest.shadow_state;
-    // 当前状态处于用户态，且开启中断并有中断正在等待
-    if (!state.smode() && state.csrs.sstatus.get_bit(STATUS_SIE_BIT)) && (state.csrs.sie & state.csrs.sip != 0) {
+    let pending = state.csrs.sie & state.csrs.sip;
+    // PR fix-bug/smode-interrupt-forwarding: an S-mode interrupt is globally
+    // enabled when the guest runs below S-mode, or when it runs in S-mode with
+    // SIE set. Keep a masked pending interrupt queued for a later boundary.
+    let globally_enabled = !guest_was_in_smode
+        || state.csrs.sstatus.get_bit(STATUS_SIE_BIT);
+    if globally_enabled && pending != 0 {
         // hdebug!("forward timer interrupt: sepc -> {:#x}", ctx.sepc);
         let cause = if state.csrs.sip.get_bit(SEIP_BIT) { 9 }
         else if state.csrs.sip.get_bit(STIP_BIT) { 5 }
@@ -26,26 +32,26 @@ pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel
         state.csrs.stval = 0;
         state.csrs.sepc = ctx.sepc;
         state.push_sie();
-        // 设置 sstatus 指向 S mode
-        state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
+        // SPP records the interrupted virtual mode; execution then enters the
+        // guest's S-mode trap vector.
+        state.csrs.sstatus.set_bit(STATUS_SPP_BIT, guest_was_in_smode);
+        guest.smode = true;
         ctx.sepc = state.csrs.stvec;
-    }else{
+    }else if pending == 0 {
         state.interrupt = false;
     }
 }
 
 /// 向 guest kernel 转发异常
 pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut TrapContext) {
+    let guest_was_in_smode = guest.smode;
     let state = &mut guest.shadow_state;
     state.csrs.scause = scause::read().code();
     state.csrs.sepc = ctx.sepc;
     state.csrs.stval = stval::read();
-    // 设置 sstatus 指向 S mode
-    state.csrs.sstatus.set_bit(STATUS_SPP_BIT, true);
+    // PR fix-bug/smode-interrupt-forwarding: preserve the pre-trap virtual
+    // mode in SPP and track trap-handler execution independently as S-mode.
+    state.csrs.sstatus.set_bit(STATUS_SPP_BIT, guest_was_in_smode);
+    guest.smode = true;
     ctx.sepc = state.csrs.stvec;
-    // 将当前中断上下文修改为中断处理地址，以便陷入内核处理
-    match guest.shadow_state.smode() {
-        true => {},
-        false => {}
-    }
 }
