@@ -32,7 +32,7 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState<P>,
     pub guest_id: usize,
-    /// PR fix-bug/smode-interrupt-forwarding: current virtual privilege mode.
+    /// PR #18 (fix-bug/smode-interrupt-forwarding): current virtual privilege mode.
     /// This is separate from sstatus.SPP, which records the mode before a trap.
     pub smode: bool,
     /// Virtual emulated device in qemu

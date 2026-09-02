@@ -16,7 +16,7 @@ pub fn maybe_forward_interrupt<P: PageTable + PageDebug>(guest: &mut GuestKernel
     let guest_was_in_smode = guest.smode;
     let state = &mut guest.shadow_state;
     let pending = state.csrs.sie & state.csrs.sip;
-    // PR fix-bug/smode-interrupt-forwarding: an S-mode interrupt is globally
+    // PR #18 (fix-bug/smode-interrupt-forwarding): an S-mode interrupt is globally
     // enabled when the guest runs below S-mode, or when it runs in S-mode with
     // SIE set. Keep a masked pending interrupt queued for a later boundary.
     let globally_enabled = !guest_was_in_smode
@@ -49,7 +49,7 @@ pub fn forward_exception<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     state.csrs.scause = scause::read().code();
     state.csrs.sepc = ctx.sepc;
     state.csrs.stval = stval::read();
-    // PR fix-bug/smode-interrupt-forwarding: preserve the pre-trap virtual
+    // PR #18 (fix-bug/smode-interrupt-forwarding): preserve the pre-trap virtual
     // mode in SPP and track trap-handler execution independently as S-mode.
     state.csrs.sstatus.set_bit(STATUS_SPP_BIT, guest_was_in_smode);
     guest.smode = true;
