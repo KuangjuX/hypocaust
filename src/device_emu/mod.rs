@@ -9,7 +9,7 @@ pub use uart::Uart;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
-pub use plic::HostPlic;
+pub use plic::VirtualPlic;
 pub use virtio::VirtIO;
 
 const QEMU_TEST_GPA: usize = 0x0010_0000;
@@ -23,6 +23,7 @@ const VIRTIO_BLOCK_HPA: usize = 0x1000_1000;
 pub struct DeviceBus {
     guest_memory: Arc<GuestMemory>,
     qemu_virt_tester: qemu_virt::QemuVirtTester,
+    plic: VirtualPlic,
     virtio: VirtIO,
     pub uart: Uart,
 }
@@ -44,6 +45,9 @@ impl DeviceBus {
                 QEMU_TEST_HPA,
                 QEMU_TEST_SIZE,
             ),
+            // PR #41 gives each VM an independent PLIC register file and
+            // pending/claim state instead of exposing the Host controller.
+            plic: VirtualPlic::new(),
             // PR #39 records Guest and Host addresses separately. VM 0 keeps
             // today's identity mapping until configurable backends are added.
             virtio: VirtIO::new(VIRTIO_BLOCK_GPA, VIRTIO_BLOCK_HPA),
@@ -54,6 +58,7 @@ impl DeviceBus {
                 && !bus.qemu_virt_tester.contains(VIRTIO_BLOCK_GPA),
             "VM device regions overlap",
         );
+        plic::self_test();
         bus
     }
 
@@ -61,16 +66,20 @@ impl DeviceBus {
     /// address predicates that cannot distinguish one VM's devices.
     pub fn contains(&self, guest_address: usize) -> bool {
         self.virtio.contains(guest_address)
+            || self.plic.contains(guest_address)
             || self.qemu_virt_tester.contains(guest_address)
     }
 
     /// PR #39 performs a 32-bit read only when this VM owns the address.
-    pub fn read_u32(&self, guest_address: usize) -> Option<u32> {
+    pub fn read_u32(&mut self, guest_address: usize) -> Option<u32> {
         if self.virtio.contains(guest_address) {
             return Some(self.virtio.read(guest_address));
         }
         if self.qemu_virt_tester.contains(guest_address) {
             return Some(self.qemu_virt_tester.read(guest_address));
+        }
+        if self.plic.contains(guest_address) {
+            return self.plic.read_u32(guest_address);
         }
         None
     }
@@ -86,7 +95,27 @@ impl DeviceBus {
             self.qemu_virt_tester.write(guest_address, value);
             return true;
         }
+        if self.plic.contains(guest_address) {
+            return self.plic.write_u32(guest_address, value);
+        }
         false
+    }
+
+    /// PR #41 raises a source only in this VM's controller and reports whether
+    /// the selected Guest context should receive a virtual external interrupt.
+    pub fn raise_irq(&mut self, source: u32, context: usize) -> bool {
+        self.plic.raise(source, context)
+    }
+
+    /// PR #41 deasserts a VM-local level-triggered device source.
+    pub fn lower_irq(&mut self, source: u32) {
+        self.plic.lower(source);
+    }
+
+    /// PR #41 exposes the PLIC context output that a later device backend maps
+    /// to one target vCPU's virtual SEIP state.
+    pub fn has_irq(&self, context: usize) -> bool {
+        self.plic.has_interrupt(context)
     }
 }
 
