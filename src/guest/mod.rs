@@ -81,12 +81,13 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         guest_kernel
     }
 
-    /// Select the next guest token and consume any pending ASID-scoped flush.
+    /// PR #26 (`feature/shadow-page-table-asid`) selects the next guest token
+    /// and consumes any pending ASID-scoped flush for that shadow root.
     pub fn prepare_user_token(&mut self) -> (usize, Option<usize>) {
         let guest_satp = self.shadow_state.csrs.satp;
         let (token, flush_asid) = match self.shadow() {
-            // `feature/shadow-page-table-asid` keeps bare-mode mappings on ASID
-            // 0, so switching away from the Host root must flush that namespace.
+            // PR #26 (`feature/shadow-page-table-asid`) keeps bare mappings on
+            // ASID 0, so switching from the Host root must flush that namespace.
             PageTableRoot::GPA => (self.memory_set.token(), Some(0)),
             PageTableRoot::GVA => if self.shadow_state.csrs.satp == self.shadow_state.shadow_page_tables.guest_satp.unwrap() 
                                     { (self.shadow_state.shadow_page_tables.page_tables[1].unwrap(), self.shadow_state.shadow_page_tables.take_tlb_flush(guest_satp)) }

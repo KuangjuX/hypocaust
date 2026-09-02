@@ -1,6 +1,6 @@
 # Shadow page-table ASIDs
 
-The `feature/shadow-page-table-asid` branch separates Host and guest shadow
+PR #26 (`feature/shadow-page-table-asid`) separates Host and guest shadow
 translations into hardware TLB namespaces.
 
 ## ASID allocation

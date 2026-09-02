@@ -65,8 +65,8 @@ impl ShadowPagingStats {
 
     #[inline]
     pub fn record_tlb_decision(&mut self, flushed: bool) {
-        // `feature/shadow-page-table-asid` records whether trap return needed
-        // an ASID-scoped fence or safely reused a clean shadow TLB namespace.
+        // PR #26 (`feature/shadow-page-table-asid`) records whether trap return
+        // fenced one ASID or safely reused a clean shadow TLB namespace.
         if flushed {
             self.return_tlb_flushes += 1;
         } else {

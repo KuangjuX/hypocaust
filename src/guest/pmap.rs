@@ -11,6 +11,8 @@ use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT
 use super::GuestKernel;
 use super::shadow_stats::ShadowPageTableUpdate;
 
+// PR #26 (`feature/shadow-page-table-asid`) encodes stable shadow-root ASIDs
+// in the architectural RV64 Sv39 field while reserving ASID 0 for the Host.
 const SATP_ASID_SHIFT: usize = 44;
 const MAX_SV39_ASID: usize = (1 << 16) - 1;
 
@@ -39,7 +41,7 @@ pub enum PageTableRoot {
 struct CachedShadowPageTable<P: PageTable + PageDebug> {
     page_table: P,
     synchronized_generation: usize,
-    /// `feature/shadow-page-table-asid` gives each cached root an independent
+    /// PR #26 (`feature/shadow-page-table-asid`) gives each root an independent
     /// hardware TLB namespace and tracks whether that namespace needs a fence.
     asid: usize,
     tlb_dirty: bool,
@@ -55,8 +57,8 @@ pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// PR #25 (`feature/cache-shadow-page-table-state`) increments this
     /// generation on trapped guest PTE writes so cached roots detect stale state.
     pte_generation: usize,
-    /// `feature/shadow-page-table-asid` reserves ASID 0 for Hypocaust and
-    /// assigns stable, nonzero identifiers to guest shadow roots.
+    /// PR #26 (`feature/shadow-page-table-asid`) reserves ASID 0 for Hypocaust
+    /// and assigns stable, nonzero identifiers to guest shadow roots.
     next_asid: usize,
 }
 
@@ -534,8 +536,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             }
         }
         if full_walks != 0 {
-            // `feature/shadow-page-table-asid` invalidates tagged translations
-            // after any full walk that may rewrite or protect shadow PTEs.
+            // PR #26 (`feature/shadow-page-table-asid`) invalidates tagged
+            // translations after a full walk may rewrite or protect shadow PTEs.
             self.shadow_state.shadow_page_tables.mark_all_tlb_dirty();
         }
         let elapsed_cycles = read_cycle().wrapping_sub(start_cycles);

@@ -53,6 +53,8 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
         self.guests.push(guest);
     }
 
+    /// PR #26 (`feature/shadow-page-table-asid`) returns both the selected
+    /// shadow token and an optional destination ASID that must be fenced.
     pub fn prepare_current_user_token(&mut self) -> (usize, Option<usize>) {
         let guest = &mut self.guests[self.guest_run_id];
         guest.prepare_user_token()

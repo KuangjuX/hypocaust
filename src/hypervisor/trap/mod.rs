@@ -136,8 +136,8 @@ pub fn trap_return() -> ! {
     let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
     let (user_satp, flush_asid) = hypervisor.prepare_current_user_token();
     if let Some(asid) = flush_asid {
-        // `feature/shadow-page-table-asid` flushes only a dirty destination
-        // namespace; clean shadow ASIDs retain their translations across traps.
+        // PR #26 (`feature/shadow-page-table-asid`) flushes only a dirty
+        // destination; clean shadow ASIDs retain translations across traps.
         unsafe { asm!("sfence.vma x0, {asid}", asid = in(reg) asid) };
     }
     extern "C" {
