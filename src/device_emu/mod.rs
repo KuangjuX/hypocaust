@@ -2,7 +2,7 @@ mod uart;
 mod plic;
 mod virtio;
 pub use uart::Uart;
-// PR fix-bug/modern-rust-toolchain: keep device types available to the module
+// PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
 #[allow(unused_imports)]
 pub use plic::HostPlic;
@@ -13,6 +13,8 @@ pub use virtio::{ VirtIO, is_device_access };
 /// Software emulated device used in VMM
 pub struct VirtDevice {
     pub qemu_virt_tester: qemu_virt::QemuVirtTester,
+    /// PR #17 (fix-bug/virtio-dma-translation): per-guest VirtIO MMIO/DMA state.
+    pub virtio: VirtIO,
     pub uart: Uart
 }
 
@@ -20,6 +22,7 @@ impl VirtDevice {
     pub fn new(guest_id: usize) -> Self {
         Self { 
             qemu_virt_tester: qemu_virt::QemuVirtTester::new(),
+            virtio: VirtIO::new(0x1000_1000),
             uart: Uart::new(guest_id)
         }
     }

@@ -20,7 +20,7 @@ use context::TaskContext;
 use riscv::addr::BitField;
 
 pub use self::context::ShadowState;
-// PR fix-bug/modern-rust-toolchain: retain these public translation helpers
+// PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.
 #[allow(unused_imports)]
 pub use self::pmap::{ ShadowPageTables, PageTableRoot, gpa2hpa, hpa2gpa };
@@ -32,7 +32,8 @@ pub struct GuestKernel<P: PageTable + PageDebug> {
     pub task_cx: TaskContext,
     pub shadow_state: ShadowState<P>,
     pub guest_id: usize,
-    /// Guest OS 是否运行在 S mode
+    /// PR #18 (fix-bug/smode-interrupt-forwarding): current virtual privilege mode.
+    /// This is separate from sstatus.SPP, which records the mode before a trap.
     pub smode: bool,
     /// Virtual emulated device in qemu
     pub virt_device: VirtDevice,
@@ -94,7 +95,7 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
     pub fn shadow(&self) -> PageTableRoot {
         if (self.shadow_state.csrs.satp >> 60) & 0xf == 0 {
             PageTableRoot::GPA
-        }else if !self.shadow_state.smode() {
+        }else if !self.smode {
             PageTableRoot::UVA
         }else {
             PageTableRoot::GVA

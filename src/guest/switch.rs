@@ -10,7 +10,7 @@ use super::TaskContext;
 
 
 #[no_mangle]
-// PR fix-bug/modern-rust-toolchain: this context switch must remain a naked
+// PR #16 (fix-bug/modern-rust-toolchain): this switch must remain a naked
 // function so Rust never saves registers before the explicit switch sequence.
 #[unsafe(naked)]
 pub unsafe extern "C" fn __switch(current_task_cx_ptr: *mut TaskContext, next_task_cx_ptr: *const TaskContext) {

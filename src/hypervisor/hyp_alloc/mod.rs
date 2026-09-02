@@ -1,7 +1,7 @@
 mod frame_allocator;
 mod heap_allocator;
 
-// PR fix-bug/modern-rust-toolchain: frame_dealloc remains part of this module's
+// PR #16 (fix-bug/modern-rust-toolchain): frame_dealloc stays in this module's
 // allocator interface although production code normally reaches it via Drop.
 #[allow(unused_imports)]
 pub use frame_allocator::{frame_alloc, frame_dealloc, FrameTracker};

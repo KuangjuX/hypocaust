@@ -9,7 +9,7 @@ use crate::debug::PageDebug;
 use crate::guest::context::TaskContext;
 use crate::guest::switch::__switch;
 
-// PR fix-bug/modern-rust-toolchain: preserve the allocator type re-export
+// PR #16 (fix-bug/modern-rust-toolchain): preserve the allocator type re-export
 // while keeping deny(warnings) useful for all other imports.
 #[allow(unused_imports)]
 pub use self::hyp_alloc::FrameTracker;

@@ -2,7 +2,8 @@ use riscv::register::stval;
 
 use crate::page_table::{PageTable,  PageTableEntry};
 use crate::debug::{PageDebug, print_guest_backtrace};
-use crate::guest::{GuestKernel, gpa2hpa, PageTableRoot};
+use crate::device_emu::is_device_access;
+use crate::guest::{GuestKernel, PageTableRoot};
 use super::{ decode_instruction_at_address, handle_qemu_virt}; 
 
 use super::TrapContext;
@@ -20,6 +21,12 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     }
 
     let guest_va = stval::read();
+    // PR #17 (fix-bug/virtio-dma-translation): MMIO is word-aligned, so
+    // route them before enforcing the page-table-entry alignment invariant.
+    if is_device_access(guest_va) || guest.virt_device.qemu_virt_tester.in_region(guest_va){
+        handle_qemu_virt(guest, ctx);
+        return true;
+    }
     if guest_va % core::mem::size_of::<PageTableEntry>() != 0 {
         hwarning!("guest va: {:#x}, sepc: {:#x}", guest_va, ctx.sepc);
         print_guest_backtrace::<P>(&guest.shadow_state.shadow_page_tables.guest_page_table().unwrap(), guest.shadow_state.csrs.satp, ctx)
@@ -27,16 +34,10 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     assert_eq!(guest_va % core::mem::size_of::<PageTableEntry>(), 0);
     let sepc = ctx.sepc;
     let (len, inst) = decode_instruction_at_address(guest, sepc);
-    // 处理 `MMIO`
-    if guest.virt_device.qemu_virt_tester.in_region(guest_va){
-        handle_qemu_virt(guest, ctx);
-        ctx.sepc += len;
-        return true;
-    }
-
     let mut pte = 0;
-    if let Some(_translation) = guest.translate_guest_vaddr(guest_va) {
-        // 获得翻译后的物理地址
+    if let Some(translation) = guest.translate_guest_vaddr(guest_va) {
+        // PR #19 (fix-bug/guest-pte-write-translation): use the guest page-table walk's
+        // host address because kernel virtual PTE aliases are not linear GPAs.
         if let Some(inst) = inst {
             match inst {
                 riscv_decode::Instruction::Sd(i) => {
@@ -54,10 +55,10 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
             }
         }
         let pte = PageTableEntry{ bits: pte };       
-        let guest_pte_addr = gpa2hpa(guest_va, guest.guest_id);
+        let guest_pte_addr = translation;
         if guest_pte_addr >=  0x4000000000 {
             print_guest_backtrace(guest.shadow_state.shadow_page_tables.guest_page_table().unwrap(), guest.shadow_state.csrs.satp, ctx);
-            panic!("guest va -> {:#x}, guest_pte_addr: {:#x}, sepc: {:#x}, translation: {:#x}", guest_va, guest_pte_addr, ctx.sepc, _translation);
+            panic!("guest va -> {:#x}, guest_pte_addr: {:#x}, sepc: {:#x}, translation: {:#x}", guest_va, guest_pte_addr, ctx.sepc, translation);
         }
         unsafe{ core::ptr::write(guest_pte_addr as *mut usize, pte.bits)}
 

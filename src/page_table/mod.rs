@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use crate::guest::gpa2hpa;
 
 pub use address::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
-// PR fix-bug/modern-rust-toolchain: preserve the module's public helper
+// PR #16 (fix-bug/modern-rust-toolchain): preserve the module's public helpers
 // surface even when this binary does not currently consume every re-export.
 #[allow(unused_imports)]
 pub use address::{StepByOne, VPNRange, PPNRange, PageRange};

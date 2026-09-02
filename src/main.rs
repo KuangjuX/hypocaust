@@ -4,7 +4,7 @@
 #![feature(alloc_error_handler)]
 #![allow(non_upper_case_globals)]
 #![allow(dead_code)] 
-// PR fix-bug/modern-rust-toolchain: the legacy linker-symbol casts and global
+// PR #16 (fix-bug/modern-rust-toolchain): legacy linker-symbol casts and global
 // allocator storage are intentional low-level patterns. Keep them buildable
 // while retaining deny(warnings) for warnings that are actionable here.
 #![allow(function_casts_as_integer, static_mut_refs, dropping_references)]
@@ -58,7 +58,7 @@ static BOOT_STACK: [u8; BOOT_STACK_SIZE] = [0u8; BOOT_STACK_SIZE];
 
 #[link_section = ".text.entry"]
 #[export_name = "_start"]
-// PR fix-bug/modern-rust-toolchain: naked_asm keeps the boot entry free of a
+// PR #16 (fix-bug/modern-rust-toolchain): naked_asm keeps the boot entry free of a
 // compiler-generated prologue while using the current Rust naked-function API.
 #[unsafe(naked)]
 /// hypocaust entrypoint

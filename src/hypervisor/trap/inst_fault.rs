@@ -21,6 +21,12 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
     if let Some(inst) = inst {
         match inst {
             riscv_decode::Instruction::Ecall => {
+                // PR #22 (fix-bug/route-user-ecalls-to-guest): legacy SBI calls are
+                // valid only from virtual S-mode; U-mode ecalls are guest syscalls.
+                if !guest.smode {
+                    forward_exception(guest, ctx);
+                    return;
+                }
                 match ctx.x[17]  {
                     SBI_SET_TIMER => {
                         let stime = ctx.x[10];
@@ -94,10 +100,15 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 write_register(ctx, i.rd() as usize, prev);
             }
             riscv_decode::Instruction::Sret => {
+                // PR #18 (fix-bug/smode-interrupt-forwarding): SPP is the return
+                // mode. Track the current mode separately before clearing SPP.
+                let return_to_smode = guest.shadow_state.csrs.sstatus
+                    .get_bit(STATUS_SPP_BIT);
                 guest.shadow_state.pop_sie();
                 ctx.sepc = guest.get_csr(crate::constants::csr::sepc);
                 guest.shadow_state.csrs.sstatus.set_bit(STATUS_SPP_BIT, false);
-                if !guest.shadow_state.smode() {
+                guest.smode = return_to_smode;
+                if !return_to_smode {
                     guest.shadow_state.interrupt = true;
                 }
                 // hdebug!("sret: spec -> {:#x}", ctx.sepc);
@@ -147,10 +158,5 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
     };
     (len, riscv_decode::decode(inst).ok())
 }
-
-
-
-
-
 
 
