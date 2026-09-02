@@ -220,6 +220,10 @@ impl<P> MemorySet<P> where P: PageTable {
     }
 
     pub fn new_guest_kernel(guest_kernel_data: &[u8], guest_memory: &GuestMemory) -> Self {
+        // PR #44 (`fix-bug/map-guest-ram-before-load`) installs this VM's Host
+        // RAM mapping before copying its ELF. VM 0 used to work only because
+        // it was loaded while the Host still ran with `satp=0`; VM 1 faulted.
+        prepare_guest_memory(guest_memory);
         let mut memory_set = Self::new_bare();
         let elf = xmas_elf::ElfFile::new(guest_kernel_data).unwrap();
         let elf_header = elf.header;
@@ -524,12 +528,40 @@ pub fn guest_kernel_test(guest_memory: &GuestMemory) {
 
     let guest_kernel_text: VirtAddr = guest_memory.host_base().into();
 
-    assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().executable());
-    assert!(kernel_space.page_table.translate(guest_kernel_text.floor()).unwrap().readable());
+    let mapping = kernel_space
+        .page_table
+        .translate(guest_kernel_text.floor())
+        .unwrap();
+    // PR #44 maps Guest RAM as Host data, never Host executable code. Guest
+    // execution permission remains confined to the vCPU's own page tables.
+    assert!(!mapping.executable());
+    assert!(mapping.readable());
     // 尝试读数据
     unsafe{
         core::ptr::read(guest_memory.host_base() as *const u32);
     }
     // 测试 guest ketnel
     hdebug!("guest kernel test passed!");
+}
+
+/// Map one complete VM RAM capability into the Host before any ELF copy, page
+/// table walk, or mediated DMA can dereference its Host physical addresses.
+fn prepare_guest_memory(guest_memory: &GuestMemory) {
+    let mut host_memory = HYPERVISOR_MEMORY.exclusive_access();
+    // PR #44 uses R/W without X because Hypocaust accesses Guest RAM only as
+    // data; the Guest's page tables independently control Guest execution.
+    host_memory.push(
+        MapArea::new(
+            VirtAddr::from(guest_memory.host_base()),
+            VirtAddr::from(guest_memory.host_end()),
+            Some(PhysAddr::from(guest_memory.host_base())),
+            Some(PhysAddr::from(guest_memory.host_end())),
+            MapType::Linear,
+            MapPermission::R | MapPermission::W,
+        ),
+        None,
+    );
+    // The Host may already have paging enabled while adding a later VM, so
+    // publish and fence the new mapping before returning to the ELF loader.
+    host_memory.activate();
 }
