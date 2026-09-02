@@ -49,8 +49,8 @@ struct CachedShadowPageTable<P: PageTable + PageDebug> {
 
 #[derive(Copy, Clone)]
 struct GuestPageTablePageState {
-    /// `feature/track-valid-pte-count` keys metadata by the guest-physical
-    /// page containing PTEs, so shared page-table pages have one live count.
+    /// PR #27 (`feature/track-valid-pte-count`) keys metadata by the
+    /// guest-physical page containing PTEs, so shared pages have one live count.
     vpn: VirtPageNum,
     valid_pte_count: usize,
 }
@@ -68,8 +68,8 @@ pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// PR #26 (`feature/shadow-page-table-asid`) reserves ASID 0 for Hypocaust
     /// and assigns stable, nonzero identifiers to guest shadow roots.
     next_asid: usize,
-    /// `feature/track-valid-pte-count` records V=1 entries while full walks
-    /// already inspect each page, avoiding a later 512-entry invalidation scan.
+    /// PR #27 (`feature/track-valid-pte-count`) records V=1 entries while full
+    /// walks inspect each page, avoiding a later 512-entry invalidation scan.
     valid_pte_counts: BTreeMap<VirtPageNum, usize>,
 }
 
@@ -154,9 +154,9 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         });
     }
 
-    /// `feature/track-valid-pte-count` updates the page's V=1 population in
-    /// O(1). A page first discovered through a trapped write is counted once
-    /// from its already-updated contents and then follows the incremental path.
+    /// PR #27 (`feature/track-valid-pte-count`) updates the page's V=1
+    /// population in O(1). A page first discovered through a trapped write is
+    /// counted once from its updated contents, then follows the incremental path.
     fn update_valid_pte_count<F: FnOnce() -> usize>(
         &mut self,
         page_vpn: VirtPageNum,

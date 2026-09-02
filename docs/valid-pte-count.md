@@ -1,8 +1,7 @@
 # Incremental valid-PTE counts
 
-`feature/track-valid-pte-count` removes a linear scan from the trapped guest
-PTE-write path. The final PR number is recorded in the implementation comments
-after the pull request is opened.
+PR #27 (`feature/track-valid-pte-count`) removes a linear scan from the trapped
+guest PTE-write path.
 
 ## Previous behavior
 
