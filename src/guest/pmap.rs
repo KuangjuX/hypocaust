@@ -254,8 +254,8 @@ pub fn initialize_shadow_page_table<P: PageTable>(hart_id: usize, satp: usize, m
                     if !is_device_access(guest_pte.ppn().0 << 12) {
                         host_pte = PageTableEntry::new(PhysPageNum::from(gpa2hpa(guest_pte.ppn().0 << 12, hart_id) >> 12) , guest_pte.flags() | PTEFlags::U);
                     }else{
-                        // Leave passthrough devices unmapped so MMIO accesses
-                        // trap into the emulator before reaching QEMU.
+                        // PR fix-bug/virtio-dma-translation: leave passthrough
+                        // devices unmapped so MMIO traps before reaching QEMU.
                         host_pte = PageTableEntry::empty();
                     }
                     host_ptes[index] = host_pte;

@@ -12,11 +12,14 @@ use crate::timer::get_time;
 use super::TrapContext;
 use super::decode_instruction_at_address;
 
+/// PR fix-bug/virtio-dma-translation: reconstruct the faulting MMIO address
+/// using the sign-extended 12-bit load/store immediate.
 fn instruction_address(base: usize, immediate: u32) -> usize {
     let offset = ((immediate << 20) as i32 >> 20) as isize;
     (base as isize + offset) as usize
 }
 
+/// Return the architectural value of a source register, including hardwired x0.
 fn register_value(ctx: &TrapContext, register: usize) -> usize {
     if register == 0 { 0 } else { ctx.x[register] }
 }

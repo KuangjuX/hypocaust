@@ -13,6 +13,7 @@ pub use virtio::{ VirtIO, is_device_access };
 /// Software emulated device used in VMM
 pub struct VirtDevice {
     pub qemu_virt_tester: qemu_virt::QemuVirtTester,
+    /// PR fix-bug/virtio-dma-translation: per-guest VirtIO MMIO/DMA state.
     pub virtio: VirtIO,
     pub uart: Uart
 }

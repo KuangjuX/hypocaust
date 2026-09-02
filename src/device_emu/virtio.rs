@@ -1,4 +1,8 @@
 //! refs: https://github.com/mit-pdos/RVirt/blob/HEAD/src/virtio.rs
+//!
+//! PR fix-bug/virtio-dma-translation: intercept legacy VirtIO MMIO queue
+//! setup and notifications, translating guest queue/descriptor addresses to
+//! host physical addresses before the passthrough QEMU device performs DMA.
 
 use arrayvec::ArrayVec;
 use core::ptr::{read_volatile, write_volatile};
@@ -107,6 +111,8 @@ impl VirtIO {
                         queues[*queue_sel as usize].size = value as usize;
                     },
                     VIRTIO_MMIO_QUEUE_PFN => {
+                        // Preserve the guest-visible PFN in software while
+                        // programming QEMU with the translated host PFN.
                         let queue = &mut queues[*queue_sel as usize];
                         queue.guest_pa = (value as usize) << 12;
                         assert!(
@@ -145,6 +151,8 @@ impl VirtIO {
     }
 
     fn translate_available(queue: &mut Queue, guest_id: usize) {
+        // Translate only newly published chains. Rewalking old entries could
+        // translate an already-host address a second time.
         assert!(queue.host_pa != 0 && queue.size != 0, "virtio queue is not configured");
         let avail = queue.host_pa + queue.size * core::mem::size_of::<Descriptor>();
         let avail_idx = unsafe { read_volatile((avail + 2) as *const u16) };

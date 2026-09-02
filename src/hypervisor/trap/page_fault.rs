@@ -21,7 +21,8 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, c
     }
 
     let guest_va = stval::read();
-    // MMIO registers are naturally word-aligned, not page-table-entry aligned.
+    // PR fix-bug/virtio-dma-translation: MMIO registers are word-aligned, so
+    // route them before enforcing the page-table-entry alignment invariant.
     if is_device_access(guest_va) || guest.virt_device.qemu_virt_tester.in_region(guest_va){
         handle_qemu_virt(guest, ctx);
         return true;
