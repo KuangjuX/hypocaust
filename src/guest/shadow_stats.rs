@@ -24,6 +24,8 @@ pub struct ShadowPagingStats {
     walked_ptes: usize,
     incremental_pte_updates: usize,
     invalidation_page_scans: usize,
+    return_tlb_flushes: usize,
+    return_tlb_flushes_avoided: usize,
     update_cycles: usize,
     max_update_cycles: usize,
 }
@@ -41,6 +43,8 @@ impl ShadowPagingStats {
             walked_ptes: 0,
             incremental_pte_updates: 0,
             invalidation_page_scans: 0,
+            return_tlb_flushes: 0,
+            return_tlb_flushes_avoided: 0,
             update_cycles: 0,
             max_update_cycles: 0,
         }
@@ -56,6 +60,17 @@ impl ShadowPagingStats {
         self.incremental_pte_updates += 1;
         if scanned_for_invalidation {
             self.invalidation_page_scans += 1;
+        }
+    }
+
+    #[inline]
+    pub fn record_tlb_decision(&mut self, flushed: bool) {
+        // `feature/shadow-page-table-asid` records whether trap return needed
+        // an ASID-scoped fence or safely reused a clean shadow TLB namespace.
+        if flushed {
+            self.return_tlb_flushes += 1;
+        } else {
+            self.return_tlb_flushes_avoided += 1;
         }
     }
 
@@ -88,7 +103,7 @@ impl ShadowPagingStats {
     fn report(&self) {
         let average_cycles = self.update_cycles / self.satp_updates;
         htracking!(
-            "shadow-paging traps={} satp_updates={} new={} cached_kernel={} cached_user={} full_walks={} walked_pages={} walked_ptes={} pte_updates={} invalidation_scans={} update_cycles={} average_cycles={} max_cycles={}",
+            "shadow-paging traps={} satp_updates={} new={} cached_kernel={} cached_user={} full_walks={} walked_pages={} walked_ptes={} pte_updates={} invalidation_scans={} return_tlb_flushes={} return_tlb_flushes_avoided={} update_cycles={} average_cycles={} max_cycles={}",
             self.traps,
             self.satp_updates,
             self.new_shadow_page_tables,
@@ -99,6 +114,8 @@ impl ShadowPagingStats {
             self.walked_ptes,
             self.incremental_pte_updates,
             self.invalidation_page_scans,
+            self.return_tlb_flushes,
+            self.return_tlb_flushes_avoided,
             self.update_cycles,
             average_cycles,
             self.max_update_cycles,

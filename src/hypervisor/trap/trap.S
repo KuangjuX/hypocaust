@@ -41,7 +41,10 @@ __alltraps:
     ld sp, 35*8(sp)
     # switch to kernel space
     csrw satp, t0
-    sfence.vma
+    # feature/shadow-page-table-asid keeps guest TLB entries tagged with
+    # nonzero ASIDs. Flush Host ASID 0 through a register without evicting them.
+    li t2, 0
+    sfence.vma x0, t2
     # jump to trap_handler
     jr t1
 
@@ -49,7 +52,7 @@ __restore:
     # a0: *TrapContext in user space(Constant); a1: user space token
     # switch to user space
     csrw satp, a1
-    sfence.vma
+    # Rust has already issued an ASID-scoped fence if this shadow root was dirty.
     csrw sscratch, a0
     mv sp, a0
     # now sp points to TrapContext in user space, start restoring based on it

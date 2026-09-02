@@ -11,6 +11,9 @@ use crate::constants::layout::{GUEST_KERNEL_VIRT_START, TRAMPOLINE, TRAP_CONTEXT
 use super::GuestKernel;
 use super::shadow_stats::ShadowPageTableUpdate;
 
+const SATP_ASID_SHIFT: usize = 44;
+const MAX_SV39_ASID: usize = (1 << 16) - 1;
+
 /// 内存信息，用于帮助做地址映射
 #[allow(unused)]
 mod segment_layout {
@@ -36,6 +39,10 @@ pub enum PageTableRoot {
 struct CachedShadowPageTable<P: PageTable + PageDebug> {
     page_table: P,
     synchronized_generation: usize,
+    /// `feature/shadow-page-table-asid` gives each cached root an independent
+    /// hardware TLB namespace and tracks whether that namespace needs a fence.
+    asid: usize,
+    tlb_dirty: bool,
 }
 
 pub struct ShadowPageTables<P: PageTable + PageDebug> {
@@ -48,6 +55,9 @@ pub struct ShadowPageTables<P: PageTable + PageDebug> {
     /// PR #25 (`feature/cache-shadow-page-table-state`) increments this
     /// generation on trapped guest PTE writes so cached roots detect stale state.
     pte_generation: usize,
+    /// `feature/shadow-page-table-asid` reserves ASID 0 for Hypocaust and
+    /// assigns stable, nonzero identifiers to guest shadow roots.
+    next_asid: usize,
 }
 
 impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
@@ -57,6 +67,7 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
             page_tables: [None; 3],
             guest_satp: None,
             pte_generation: 0,
+            next_asid: 1,
         }
     }
 
@@ -64,12 +75,18 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         unsafe{ &mut *self.spts.get() }
     }
 
-    pub fn push(&self, satp: usize, spt: P) {
-        let inner = self.spts();
-        inner.insert(satp, CachedShadowPageTable {
+    pub fn push(&mut self, satp: usize, spt: P) -> usize {
+        assert!(self.next_asid <= MAX_SV39_ASID, "shadow ASID space exhausted");
+        let asid = self.next_asid;
+        self.next_asid += 1;
+        let shadow_satp = spt.token() | (asid << SATP_ASID_SHIFT);
+        self.spts.get_mut().insert(satp, CachedShadowPageTable {
             page_table: spt,
             synchronized_generation: self.pte_generation,
+            asid,
+            tlb_dirty: false,
         });
+        shadow_satp
     }
 
 
@@ -92,6 +109,29 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
 
     pub fn record_pte_write(&mut self) {
         self.pte_generation = self.pte_generation.wrapping_add(1);
+        self.mark_all_tlb_dirty();
+    }
+
+    pub fn shadow_token(&self, satp: usize) -> Option<usize> {
+        self.spts().get(&satp).map(|cached| {
+            cached.page_table.token() | (cached.asid << SATP_ASID_SHIFT)
+        })
+    }
+
+    pub fn mark_all_tlb_dirty(&self) {
+        self.spts().values_mut().for_each(|cached| {
+            cached.tlb_dirty = true;
+        });
+    }
+
+    pub fn take_tlb_flush(&self, satp: usize) -> Option<usize> {
+        let cached = self.spts().get_mut(&satp).unwrap();
+        if cached.tlb_dirty {
+            cached.tlb_dirty = false;
+            Some(cached.asid)
+        }else{
+            None
+        }
     }
 
     pub fn guest_page_table(&self) -> Option<&mut P> {
@@ -425,8 +465,8 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
             spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
 
             // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
-            self.shadow_state.shadow_page_tables.install_root(spt.token(), mode);
-            self.shadow_state.shadow_page_tables.push(satp, spt);
+            let shadow_satp = self.shadow_state.shadow_page_tables.push(satp, spt);
+            self.shadow_state.shadow_page_tables.install_root(shadow_satp, mode);
         }else{
             let requires_resynchronization = requires_resynchronization.unwrap();
             match mode {
@@ -487,11 +527,16 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
                         }
                         self.shadow_state.shadow_page_tables.mark_synchronized(satp);
                     }
-                    let spt = &mut self.shadow_state.shadow_page_tables.shadow_page_table(satp).unwrap();
-                    self.shadow_state.shadow_page_tables.install_root(spt.token(), PageTableRoot::UVA);
+                    let shadow_satp = self.shadow_state.shadow_page_tables.shadow_token(satp).unwrap();
+                    self.shadow_state.shadow_page_tables.install_root(shadow_satp, PageTableRoot::UVA);
                 },
                 _ => unreachable!()
             }
+        }
+        if full_walks != 0 {
+            // `feature/shadow-page-table-asid` invalidates tagged translations
+            // after any full walk that may rewrite or protect shadow PTEs.
+            self.shadow_state.shadow_page_tables.mark_all_tlb_dirty();
         }
         let elapsed_cycles = read_cycle().wrapping_sub(start_cycles);
         self.shadow_state.shadow_paging_stats.record_satp_update(
