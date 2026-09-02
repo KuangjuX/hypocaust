@@ -31,7 +31,7 @@ use riscv::register::{
 pub use context::TrapContext;
 use self::inst_fault::{ifault, decode_instruction_at_address};
 use self::page_fault::handle_page_fault;
-use self::device::{ handle_qemu_virt, handle_time_interrupt };
+use self::device::{handle_device_mmio, handle_time_interrupt};
 use self::forward::{forward_exception, maybe_forward_interrupt};
 
 
@@ -83,7 +83,7 @@ pub fn trap_handler() -> ! {
     let scause = scause::read();
     let stval = stval::read();
     // get guest kernel
-    let guest = hypervisor.current_vcpu(hart_id);
+    let (guest, device_bus) = hypervisor.current_vcpu_and_device_bus(hart_id);
     // PR #24 (`feature/shadow-paging-profile`) counts every transition from
     // the deprivileged guest into Hypocaust to correlate traps with paging work.
     guest.shadow_state.shadow_paging_stats.record_trap();
@@ -100,7 +100,7 @@ pub fn trap_handler() -> ! {
         // design and must enter the same MMIO emulator as register writes.
         Trap::Exception(Exception::LoadPageFault) |
         Trap::Exception(Exception::StorePageFault) => {
-            if !handle_page_fault(guest, ctx) {
+            if !handle_page_fault(guest, device_bus, ctx) {
                 htracking!("forward page exception sepc -> {:#x}", ctx.sepc);
                 forward_exception(guest, ctx);
             }

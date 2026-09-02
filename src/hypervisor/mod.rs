@@ -3,6 +3,7 @@ use core::arch::asm;
 use spin::Mutex;
 
 use crate::debug::PageDebug;
+use crate::device_emu::DeviceBus;
 use crate::guest::context::TaskContext;
 use crate::guest::switch::__switch;
 use crate::guest::{Vcpu, VirtualMachine};
@@ -87,6 +88,21 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
         let key = self.scheduler.current(hart_id)
             .expect("Host hart has no current vCPU");
         self.vcpu_mut(key)
+    }
+
+    /// PR #39 resolves MMIO through the current vCPU's owning VM and returns
+    /// its shared device bus instead of vCPU-local device state.
+    pub fn current_vcpu_and_device_bus(
+        &mut self,
+        hart_id: HartId,
+    ) -> (&mut Vcpu<P>, &mut DeviceBus) {
+        let key = self
+            .scheduler
+            .current(hart_id)
+            .expect("Host hart has no current vCPU");
+        self.vm_mut(key.vm_id)
+            .and_then(|vm| vm.vcpu_and_device_bus_mut(key.vcpu_id))
+            .expect("current vCPU or its device bus does not exist")
     }
 
     pub fn schedule(&mut self, hart_id: HartId) -> Option<VcpuKey> {

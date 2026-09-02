@@ -4,6 +4,7 @@ use crate::constants::csr::sie::STIE_BIT;
 use crate::constants::csr::sip::STIP_BIT;
 use crate::page_table::PageTable;
 use crate::debug::PageDebug;
+use crate::device_emu::DeviceBus;
 use crate::guest::Vcpu;
 use crate::sbi::set_timer;
 use crate::timer::get_default_timer;
@@ -24,7 +25,13 @@ fn register_value(ctx: &TrapContext, register: usize) -> usize {
     if register == 0 { 0 } else { ctx.x[register] }
 }
 
-pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) {
+/// PR #39 decodes one trapped MMIO instruction and delegates the reconstructed
+/// Guest address to the current VM's device bus.
+pub fn handle_device_mmio<P: PageTable + PageDebug>(
+    guest: &mut Vcpu<P>,
+    device_bus: &mut DeviceBus,
+    ctx: &mut TrapContext,
+) {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
@@ -33,25 +40,24 @@ pub fn handle_qemu_virt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut
                 let rs2 = i.rs2() as usize;
                 let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
                 let value = register_value(ctx, rs2);
-                if crate::device_emu::is_device_access(vaddr) {
-                    guest
-                        .virt_device
-                        .virtio
-                        .write(vaddr, value as u32, &guest.guest_memory);
-                }else{
-                    guest.virt_device.qemu_virt_tester.mmregs[vaddr] = value as u32;
-                }
+                // PR #39 routes the reconstructed Guest address only through
+                // the DeviceBus owned by this vCPU's VM.
+                assert!(device_bus.write_u32(vaddr, value as u32));
             },
             riscv_decode::Instruction::Lw(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let value = guest.virt_device.virtio.read(vaddr);
+                let value = device_bus
+                    .read_u32(vaddr)
+                    .expect("MMIO read outside the current VM's device bus");
                 if i.rd() != 0 {
                     ctx.x[i.rd() as usize] = value as i32 as isize as usize;
                 }
             },
             riscv_decode::Instruction::Lwu(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let value = guest.virt_device.virtio.read(vaddr);
+                let value = device_bus
+                    .read_u32(vaddr)
+                    .expect("MMIO read outside the current VM's device bus");
                 if i.rd() != 0 {
                     ctx.x[i.rd() as usize] = value as usize;
                 }
@@ -79,9 +85,4 @@ pub fn handle_time_interrupt<P: PageTable + PageDebug>(guest: &mut Vcpu<P>) {
     }
     // 设置下次中断
     set_timer(next);
-}
-
-#[inline(always)]
-pub fn is_device_access(guest_pa: usize) -> bool {
-    guest_pa >= 0x1000_1000 && guest_pa < 0x1000_1000 + 1000
 }

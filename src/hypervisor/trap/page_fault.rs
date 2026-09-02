@@ -2,13 +2,17 @@ use riscv::register::stval;
 
 use crate::page_table::{PageTable,  PageTableEntry};
 use crate::debug::{PageDebug, print_guest_backtrace};
-use crate::device_emu::is_device_access;
+use crate::device_emu::DeviceBus;
 use crate::guest::{Vcpu, PageTableRoot};
-use super::{ decode_instruction_at_address, handle_qemu_virt}; 
+use super::{decode_instruction_at_address, handle_device_mmio};
 
 use super::TrapContext;
 
-pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mut TrapContext) -> bool {
+pub fn handle_page_fault<P: PageTable + PageDebug>(
+    guest: &mut Vcpu<P>,
+    device_bus: &mut DeviceBus,
+    ctx: &mut TrapContext,
+) -> bool {
     let shadow = guest.shadow();
     if shadow == PageTableRoot::GPA {
         hdebug!("Page fault without paging enabled?");
@@ -23,8 +27,10 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, ctx: &mu
     let guest_va = stval::read();
     // PR #17 (fix-bug/virtio-dma-translation): MMIO is word-aligned, so
     // route them before enforcing the page-table-entry alignment invariant.
-    if is_device_access(guest_va) || guest.virt_device.qemu_virt_tester.in_region(guest_va){
-        handle_qemu_virt(guest, ctx);
+    // PR #39 asks the current VM's bus whether this fault is MMIO. Global
+    // address tests could accidentally route one VM to another VM's device.
+    if device_bus.contains(guest_va) {
+        handle_device_mmio(guest, device_bus, ctx);
         return true;
     }
     if guest_va % core::mem::size_of::<PageTableEntry>() != 0 {

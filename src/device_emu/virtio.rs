@@ -48,6 +48,9 @@ struct Descriptor {
 
 pub enum Device {
     Passthrough {
+        /// PR #39 keeps the Guest-visible register base separate from the Host
+        /// physical MMIO aperture assigned to this VM.
+        guest_base_address: usize,
         /// Virtual Queue Index, offset=0x30
         queue_sel: u32,
         queues: [Queue; MAX_QUEUES],
@@ -57,8 +60,9 @@ pub enum Device {
 }
 
 impl Device {
-    pub fn new(host_base_address: usize) -> Self {
+    pub fn new(guest_base_address: usize, host_base_address: usize) -> Self {
         Device::Passthrough { 
+            guest_base_address,
             queue_sel: 0,
             queues: [Queue {
                 guest_pa: 0,
@@ -72,9 +76,9 @@ impl Device {
 }
 
 impl VirtIO {
-    pub fn new(host_base_address: usize) -> Self {
+    pub fn new(guest_base_address: usize, host_base_address: usize) -> Self {
         let mut devices = ArrayVec::new();
-        devices.push(Device::new(host_base_address));
+        devices.push(Device::new(guest_base_address, host_base_address));
         Self { devices }
     }
 
@@ -82,13 +86,19 @@ impl VirtIO {
         let device = self.devices.iter().find(|device| device.contains(address))
             .expect("virtio read outside registered device");
         match device {
-            Device::Passthrough { queue_sel, queues, device_registers } => {
-                let offset = address - device_registers.base();
+            Device::Passthrough {
+                guest_base_address,
+                queue_sel,
+                queues,
+                device_registers,
+            } => {
+                let offset = address - *guest_base_address;
                 if offset == VIRTIO_MMIO_QUEUE_PFN {
                     assert!((*queue_sel as usize) < queues.len(), "virtio queue selection out of range");
                     return (queues[*queue_sel as usize].guest_pa >> 12) as u32;
                 }
-                unsafe { read_volatile(address as *const u32) }
+                let host_address = device_registers.base() + offset;
+                unsafe { read_volatile(host_address as *const u32) }
             },
             Device::Unmapped => unreachable!(),
         }
@@ -98,8 +108,13 @@ impl VirtIO {
         let device = self.devices.iter_mut().find(|device| device.contains(address))
             .expect("virtio write outside registered device");
         match device {
-            Device::Passthrough { queue_sel, queues, device_registers } => {
-                let offset = address - device_registers.base();
+            Device::Passthrough {
+                guest_base_address,
+                queue_sel,
+                queues,
+                device_registers,
+            } => {
+                let offset = address - *guest_base_address;
                 let mut device_value = value;
                 match offset {
                     VIRTIO_MMIO_QUEUE_SEL => {
@@ -143,7 +158,8 @@ impl VirtIO {
                     },
                     _ => {},
                 }
-                unsafe { write_volatile(address as *mut u32, device_value) };
+                let host_address = device_registers.base() + offset;
+                unsafe { write_volatile(host_address as *mut u32, device_value) };
             },
             Device::Unmapped => unreachable!(),
         }
@@ -200,12 +216,23 @@ impl VirtIO {
 impl Device {
     fn contains(&self, address: usize) -> bool {
         match self {
-            Device::Passthrough { device_registers, .. } => device_registers.in_region(address),
+            Device::Passthrough {
+                guest_base_address,
+                device_registers,
+                ..
+            } => {
+                address >= *guest_base_address
+                    && address - *guest_base_address < device_registers.len()
+            }
             Device::Unmapped => false,
         }
     }
 }
 
-pub fn is_device_access(guest_pa: usize) -> bool {
-    guest_pa >= 0x1000_1000 && guest_pa < 0x1000_2000
+impl VirtIO {
+    pub fn contains(&self, guest_address: usize) -> bool {
+        self.devices
+            .iter()
+            .any(|device| device.contains(guest_address))
+    }
 }
