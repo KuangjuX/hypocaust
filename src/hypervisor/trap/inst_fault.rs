@@ -21,6 +21,12 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
     if let Some(inst) = inst {
         match inst {
             riscv_decode::Instruction::Ecall => {
+                // PR #22 (fix-bug/route-user-ecalls-to-guest): legacy SBI calls are
+                // valid only from virtual S-mode; U-mode ecalls are guest syscalls.
+                if !guest.smode {
+                    forward_exception(guest, ctx);
+                    return;
+                }
                 match ctx.x[17]  {
                     SBI_SET_TIMER => {
                         let stime = ctx.x[10];
@@ -152,7 +158,5 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
     };
     (len, riscv_decode::decode(inst).ok())
 }
-
-
 
 
