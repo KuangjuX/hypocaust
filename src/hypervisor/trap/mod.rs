@@ -132,9 +132,14 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let trap_cx_ptr = TRAP_CONTEXT;
     unsafe{ HYPOCAUST.force_unlock(); }
-    let hypervisor = HYPOCAUST.lock();
-    let hypervisor = {&*hypervisor}.as_ref().unwrap();
-    let user_satp = hypervisor.current_user_token();
+    let mut hypervisor = HYPOCAUST.lock();
+    let hypervisor = {&mut *hypervisor}.as_mut().unwrap();
+    let (user_satp, flush_asid) = hypervisor.prepare_current_user_token();
+    if let Some(asid) = flush_asid {
+        // PR #26 (`feature/shadow-page-table-asid`) flushes only a dirty
+        // destination; clean shadow ASIDs retain translations across traps.
+        unsafe { asm!("sfence.vma x0, {asid}", asid = in(reg) asid) };
+    }
     extern "C" {
         fn __alltraps();
         fn __restore();

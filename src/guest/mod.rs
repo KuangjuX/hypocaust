@@ -81,15 +81,21 @@ impl<P> GuestKernel<P> where P: PageDebug + PageTable {
         guest_kernel
     }
 
-    /// 根据 `PageTableRoot` mode 来获取对应的 shadow page table token
-    pub fn get_user_token(&self) -> usize {
-        match self.shadow() {
-            PageTableRoot::GPA => self.memory_set.token(), 
+    /// PR #26 (`feature/shadow-page-table-asid`) selects the next guest token
+    /// and consumes any pending ASID-scoped flush for that shadow root.
+    pub fn prepare_user_token(&mut self) -> (usize, Option<usize>) {
+        let guest_satp = self.shadow_state.csrs.satp;
+        let (token, flush_asid) = match self.shadow() {
+            // PR #26 (`feature/shadow-page-table-asid`) keeps bare mappings on
+            // ASID 0, so switching from the Host root must flush that namespace.
+            PageTableRoot::GPA => (self.memory_set.token(), Some(0)),
             PageTableRoot::GVA => if self.shadow_state.csrs.satp == self.shadow_state.shadow_page_tables.guest_satp.unwrap() 
-                                    { self.shadow_state.shadow_page_tables.page_tables[1].unwrap() }
-                                    else{ self.shadow_state.shadow_page_tables.page_tables[2].unwrap() },
-            PageTableRoot::UVA => self.shadow_state.shadow_page_tables.page_tables[2].unwrap(),  
-        }
+                                    { (self.shadow_state.shadow_page_tables.page_tables[1].unwrap(), self.shadow_state.shadow_page_tables.take_tlb_flush(guest_satp)) }
+                                    else{ (self.shadow_state.shadow_page_tables.page_tables[2].unwrap(), self.shadow_state.shadow_page_tables.take_tlb_flush(guest_satp)) },
+            PageTableRoot::UVA => (self.shadow_state.shadow_page_tables.page_tables[2].unwrap(), self.shadow_state.shadow_page_tables.take_tlb_flush(guest_satp)),
+        };
+        self.shadow_state.shadow_paging_stats.record_tlb_decision(flush_asid.is_some());
+        (token, flush_asid)
     }
 
     /// 用来检查应当使用哪一级的影子页表
