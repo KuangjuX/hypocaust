@@ -45,37 +45,37 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 }
             },
             riscv_decode::Instruction::Csrrc(i) => {
-                let mask = ctx.x[i.rs1() as usize];
+                let mask = read_register(ctx, i.rs1() as usize);
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
                 let val = guest.get_csr(csr);
                 if mask != 0 {
                     guest.set_csr(csr, val & !mask);
                 }
-                ctx.x[rd] = val;
+                write_register(ctx, rd, val);
             }
             riscv_decode::Instruction::Csrrs(i) => {
-                let mask = ctx.x[i.rs1() as usize];
+                let mask = read_register(ctx, i.rs1() as usize);
                 let csr = i.csr() as usize;
                 let rd = i.rd() as usize;
                 let val = guest.get_csr(csr);
                 if mask != 0 {
                     guest.set_csr(csr, val | mask);
                 }
-                ctx.x[rd] = val;
+                write_register(ctx, rd, val);
             }
             // 写 CSR 指令
             riscv_decode::Instruction::Csrrw(i) => {
                 let prev = guest.get_csr(i.csr() as usize);
                 // 向 Shadow CSR 写入
-                let val = ctx.x[i.rs1() as usize];
+                let val = read_register(ctx, i.rs1() as usize);
                 guest.set_csr(i.csr() as usize, val);
-                ctx.x[i.rd() as usize] = prev;
+                write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrwi(i) => {
                 let prev = guest.get_csr(i.csr() as usize);
                 guest.set_csr(i.csr() as usize, i.zimm() as usize);
-                ctx.x[i.rd() as usize] = prev;
+                write_register(ctx, i.rd() as usize, prev);
             }
             riscv_decode::Instruction::Csrrsi(i) => {
                 let prev = guest.get_csr(i.csr() as usize);
@@ -83,7 +83,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 if mask != 0 {
                     guest.set_csr(i.csr() as usize, prev | mask);
                 }
-                ctx.x[i.rd() as usize] = prev;
+                write_register(ctx, i.rd() as usize, prev);
             },
             riscv_decode::Instruction::Csrrci(i) => {
                 let prev = guest.get_csr(i.csr() as usize);
@@ -91,7 +91,7 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
                 if mask != 0 {
                     guest.set_csr(i.csr() as usize, prev & !mask);
                 }
-                ctx.x[i.rd() as usize] = prev;
+                write_register(ctx, i.rd() as usize, prev);
             }
             riscv_decode::Instruction::Sret => {
                 guest.shadow_state.pop_sie();
@@ -123,6 +123,18 @@ pub fn ifault<P: PageTable + PageDebug>(guest: &mut GuestKernel<P>, ctx: &mut Tr
     ctx.sepc += len;
 }
 
+#[inline]
+fn read_register(ctx: &TrapContext, register: usize) -> usize {
+    if register == 0 { 0 } else { ctx.x[register] }
+}
+
+#[inline]
+fn write_register(ctx: &mut TrapContext, register: usize, value: usize) {
+    if register != 0 {
+        ctx.x[register] = value;
+    }
+}
+
 /// decode instruction from Guest OS address
 pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKernel<P>, addr: usize) -> (usize, Option<riscv_decode::Instruction>) {
     let paddr = guest.translate_guest_vaddr(addr).unwrap();
@@ -135,9 +147,6 @@ pub fn decode_instruction_at_address<P: PageTable + PageDebug>(guest: &GuestKern
     };
     (len, riscv_decode::decode(inst).ok())
 }
-
-
-
 
 
 
