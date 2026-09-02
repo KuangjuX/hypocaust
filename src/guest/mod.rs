@@ -30,6 +30,7 @@ use riscv::addr::BitField;
 
 pub use self::context::{ShadowState, VirtualInterrupt};
 pub(crate) use self::context::virtual_interrupt_self_test;
+pub(crate) use self::sbi::self_test as sbi_self_test;
 pub use self::memory::GuestMemory;
 pub use self::payload::{GuestPayload, LinuxImage};
 pub(crate) use self::payload::self_test as payload_self_test;

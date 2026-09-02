@@ -8,7 +8,10 @@ use crate::device_emu::DeviceBus;
 use crate::constants::csr::status::STATUS_SPP_BIT;
 use crate::page_table::PageTable;
 use crate::sbi::{ set_timer, shutdown };
-use crate::guest::sbi::{ SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR, SBI_SET_TIMER, SBI_SHUTDOWN };
+use crate::guest::sbi::{
+    dispatch_modern, SbiAction, SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR,
+    SBI_SET_TIMER, SBI_SHUTDOWN,
+};
 use crate::guest::{Vcpu, VirtualInterrupt};
 
 
@@ -29,30 +32,38 @@ pub fn ifault<P: PageTable + PageDebug>(
                     forward_exception(guest, ctx);
                     return;
                 }
-                match ctx.x[17]  {
-                    SBI_SET_TIMER => {
-                        let stime = ctx.x[10];
-                        guest.shadow_state.csrs.mtimecmp = stime;
-                        set_timer(stime);
-                        // PR #40 deasserts only this vCPU's virtual timer when
-                        // the Guest programs a new deadline.
-                        guest.clear_virtual_interrupt(VirtualInterrupt::Timer);
+                // PR #54 (`feature/sbi-v02-base-time`) decodes the modern ABI
+                // before falling back to legacy calls. SBI v0.2 uses a7/a6 for
+                // extension/function IDs and returns `(error, value)` in a0/a1.
+                let arguments = [
+                    ctx.x[10], ctx.x[11], ctx.x[12], ctx.x[13], ctx.x[14], ctx.x[15],
+                ];
+                if let Some(response) = dispatch_modern(ctx.x[17], ctx.x[16], arguments) {
+                    match response.action {
+                        SbiAction::None => {}
+                        SbiAction::SetTimer(stime) => program_guest_timer(guest, stime),
                     }
-                    SBI_CONSOLE_PUTCHAR => {
-                        let c = ctx.x[10];
-                        // PR #49 (`feature/per-vm-console`) buffers output in
-                        // the current VM's DeviceBus before Host emission.
-                        device_bus.console_putchar(c);
-                    }
-                    SBI_CONSOLE_GETCHAR => {
-                        let c = device_bus.console_getchar();
-                        ctx.x[10] = c;
-                    }
-                    SBI_SHUTDOWN => shutdown(),
-                    _ => {
-                        // hdebug!("forward exception: sepc -> {:#x}", ctx.sepc);
-                        forward_exception(guest, ctx);
-                        return;
+                    ctx.x[10] = response.error;
+                    ctx.x[11] = response.value;
+                } else {
+                    match ctx.x[17] {
+                        SBI_SET_TIMER => program_guest_timer(guest, ctx.x[10]),
+                        SBI_CONSOLE_PUTCHAR => {
+                            let c = ctx.x[10];
+                            // PR #49 (`feature/per-vm-console`) buffers output
+                            // before Host emission.
+                            device_bus.console_putchar(c);
+                        }
+                        SBI_CONSOLE_GETCHAR => {
+                            let c = device_bus.console_getchar();
+                            ctx.x[10] = c;
+                        }
+                        SBI_SHUTDOWN => shutdown(),
+                        _ => {
+                            // hdebug!("forward exception: sepc -> {:#x}", ctx.sepc);
+                            forward_exception(guest, ctx);
+                            return;
+                        }
                     }
                 }
             },
@@ -165,6 +176,15 @@ pub fn ifault<P: PageTable + PageDebug>(
         return;
     }
     ctx.sepc += len;
+}
+
+/// Program one vCPU's virtual deadline and deassert its previous timer IRQ.
+/// PR #54 shares this operation between the legacy and v0.2 TIME ABIs so Linux
+/// and xv6-rust observe identical timer semantics.
+fn program_guest_timer<P: PageTable + PageDebug>(guest: &mut Vcpu<P>, stime: usize) {
+    guest.shadow_state.csrs.mtimecmp = stime;
+    set_timer(stime);
+    guest.clear_virtual_interrupt(VirtualInterrupt::Timer);
 }
 
 #[inline]
