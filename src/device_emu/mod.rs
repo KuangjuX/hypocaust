@@ -5,6 +5,7 @@ mod virtio;
 use alloc::sync::Arc;
 
 use crate::guest::GuestMemory;
+use crate::constants::layout::PAGE_SIZE;
 pub use uart::Uart;
 pub(crate) use uart::self_test as console_self_test;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
@@ -283,6 +284,64 @@ impl DeviceBus {
     /// PR #49 applies exclusive Host input focus at the VM-owned bus boundary.
     pub fn console_getchar(&mut self) -> usize {
         self.uart.read_console_byte()
+    }
+
+    /// PR #61 (`feature/sbi-dbcn-console`) validates the entire shared-memory
+    /// range against this VM's RAM capability, then performs a bounded partial
+    /// transfer as permitted by DBCN's non-blocking bulk operations.
+    pub fn debug_console_write(
+        &mut self,
+        num_bytes: usize,
+        base_addr_lo: usize,
+        base_addr_hi: usize,
+    ) -> Option<usize> {
+        let (host_address, transfer_len) = self.debug_console_buffer(
+            num_bytes,
+            base_addr_lo,
+            base_addr_hi,
+        )?;
+        let bytes = unsafe {
+            core::slice::from_raw_parts(host_address as *const u8, transfer_len)
+        };
+        self.uart.write_console_bytes(bytes);
+        Some(transfer_len)
+    }
+
+    /// PR #61 writes console input only into RAM owned by the calling VM. The
+    /// returned byte count exposes an empty non-blocking read without using a
+    /// sentinel value in Guest memory.
+    pub fn debug_console_read(
+        &mut self,
+        num_bytes: usize,
+        base_addr_lo: usize,
+        base_addr_hi: usize,
+    ) -> Option<usize> {
+        let (host_address, transfer_len) = self.debug_console_buffer(
+            num_bytes,
+            base_addr_lo,
+            base_addr_hi,
+        )?;
+        let bytes = unsafe {
+            core::slice::from_raw_parts_mut(host_address as *mut u8, transfer_len)
+        };
+        Some(self.uart.read_console_bytes(bytes))
+    }
+
+    fn debug_console_buffer(
+        &self,
+        num_bytes: usize,
+        base_addr_lo: usize,
+        base_addr_hi: usize,
+    ) -> Option<(usize, usize)> {
+        // RV64 Linux supplies the physical address in the low XLEN word. A
+        // nonzero high word cannot identify memory in Hypocaust's GPA space.
+        if base_addr_hi != 0 {
+            return None;
+        }
+        let host_address = self
+            .guest_memory
+            .translate_range(base_addr_lo, num_bytes)?;
+        Some((host_address, num_bytes.min(PAGE_SIZE)))
     }
 }
 
