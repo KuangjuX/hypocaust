@@ -1,4 +1,7 @@
-use riscv::register::stval;
+use riscv::register::{
+    scause::{self, Exception, Trap},
+    stval,
+};
 
 use crate::page_table::{PageTable,  PageTableEntry};
 use crate::debug::PageDebug;
@@ -31,18 +34,27 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(
     device_bus: &mut DeviceBus,
     ctx: &mut TrapContext,
 ) -> bool {
+    let guest_va = stval::read();
     let shadow = guest.shadow();
     if shadow == PageTableRoot::GPA {
         hdebug!("Page fault without paging enabled?");
         return false;
     }
     if shadow == PageTableRoot::UVA {
+        // PR #72 (`fix-bug/linux-user-shadow-fault-loop`) repairs a missed
+        // writable Guest PTE update before Linux sees the same spurious store
+        // fault forever. Real demand and protection faults are still forwarded.
+        if matches!(
+            scause::read().cause(),
+            Trap::Exception(Exception::StorePageFault),
+        ) && guest.repair_stale_user_store(guest_va) {
+            return true;
+        }
         // 用户态触发异常，进行转发
         hwarning!("Page fault from U mode?");
         return false;
     }
 
-    let guest_va = stval::read();
     // PR #17 (fix-bug/virtio-dma-translation): MMIO is word-aligned, so
     // route them before enforcing the page-table-entry alignment invariant.
     // PR #39 asks the current VM's bus whether this fault is MMIO. Global

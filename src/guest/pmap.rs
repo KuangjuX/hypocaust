@@ -285,6 +285,27 @@ fn shadow_leaf_pte(
     }
 }
 
+/// PR #72 (`fix-bug/linux-user-shadow-fault-loop`) distinguishes a stale Host
+/// mirror from an architectural Guest store fault. A valid Guest leaf must grant
+/// U/W/A/D, its target must not be protected page-table storage, and the shadow
+/// leaf must actually lack the mapping or write permission before repair.
+fn should_repair_user_store(
+    guest_pte: PageTableEntry,
+    shadow_pte: PageTableEntry,
+    expected_shadow_pte: PageTableEntry,
+    target_is_page_table: bool,
+) -> bool {
+    guest_pte.is_valid()
+        && guest_pte.is_user()
+        && guest_pte.writable()
+        && guest_pte.accessed()
+        && guest_pte.dirty()
+        && !target_is_page_table
+        && (!shadow_pte.is_valid()
+            || !shadow_pte.writable()
+            || shadow_pte.ppn() != expected_shadow_pte.ppn())
+}
+
 fn is_leaf(pte: PageTableEntry) -> bool {
     pte.readable() || pte.executable()
 }
@@ -446,6 +467,30 @@ pub(crate) fn superpage_self_test() {
         "recycled page-table pages must leave the tracking set",
     );
     assert!(!tracking.release_reused_page_table(released_vpn.0 << 12));
+
+    // PR #72 locks the lazy repair policy to the exact mismatch observed while
+    // Alpine /init retried one writable Guest page through a read-only shadow.
+    let writable_user = PageTableEntry::new(
+        PhysPageNum::from(0x80e3b),
+        PTEFlags::V | PTEFlags::R | PTEFlags::W | PTEFlags::U
+            | PTEFlags::A | PTEFlags::D,
+    );
+    let stale_readonly = PageTableEntry::new(
+        writable_user.ppn(),
+        PTEFlags::V | PTEFlags::R | PTEFlags::U | PTEFlags::D,
+    );
+    assert!(should_repair_user_store(
+        writable_user, stale_readonly, writable_user, false,
+    ));
+    assert!(!should_repair_user_store(
+        writable_user, writable_user, writable_user, false,
+    ));
+    assert!(!should_repair_user_store(
+        writable_user, stale_readonly, writable_user, true,
+    ));
+    assert!(!should_repair_user_store(
+        stale_readonly, stale_readonly, stale_readonly, false,
+    ));
 }
 
 
@@ -844,6 +889,62 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
         let guest_root = (self.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
         translate_guest_address::<P>(&self.guest_memory, guest_root, vaddr)
             .map(|translation| translation.guest_pa)
+    }
+
+    /// Repair one stale 4 KiB user shadow leaf after the Guest has already made
+    /// its authoritative PTE writable. PR #72 retries at the same PC, avoiding
+    /// an endless false StorePageFault loop without accepting real Guest faults.
+    pub fn repair_stale_user_store(&mut self, vaddr: usize) -> bool {
+        let satp = self.shadow_state.csrs.satp;
+        let guest_root = (satp & 0xfff_ffff_ffff) << 12;
+        let Some(translation) = translate_guest_address::<P>(
+            &self.guest_memory,
+            guest_root,
+            vaddr,
+        ) else {
+            return false;
+        };
+        let target_gpa = translation.guest_pa & !(PAGE_SIZE - 1);
+        let target_is_page_table = self
+            .shadow_state
+            .shadow_page_tables
+            .tracks_page_table_page(target_gpa);
+        let Some(target_hpa) = self.guest_memory.translate_range(target_gpa, PAGE_SIZE) else {
+            return false;
+        };
+        let expected = PageTableEntry::new(
+            PhysPageNum::from(target_hpa >> 12),
+            translation.pte.flags() | PTEFlags::U,
+        );
+        let vpn = VirtPageNum::from(vaddr >> 12);
+        let repaired = {
+            let Some(shadow) = self
+                .shadow_state
+                .shadow_page_tables
+                .shadow_page_table(satp)
+            else {
+                return false;
+            };
+            let Some(shadow_pte) = shadow.find_pte(vpn) else {
+                return false;
+            };
+            if !should_repair_user_store(
+                translation.pte,
+                *shadow_pte,
+                expected,
+                target_is_page_table,
+            ) {
+                return false;
+            }
+            *shadow_pte = expected;
+            true
+        };
+        if repaired {
+            // PR #72 forces the repaired ASID to discard the old read-only TLB
+            // entry before hardware retries the unchanged user instruction.
+            self.shadow_state.shadow_page_tables.mark_all_tlb_dirty();
+        }
+        repaired
     }
 
     /// Release a count-zero page after a non-PTE store proves that the Guest
