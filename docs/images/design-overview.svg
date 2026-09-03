@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
+  <title id="title">Hypocaust design overview</title>
+  <desc id="desc">Two isolated virtual machines run above the Hypocaust Host S-mode scheduler, shadow paging, trap emulation, and per-VM device buses. OpenSBI and QEMU provide firmware and hardware below.</desc>
+  <!-- PR #75 (feature/redesign-architecture-diagrams) replaces the obsolete
+       single-layer RustSBI sketch with the validated multi-Guest design. -->
+  <defs>
+    <style>
+      .canvas { fill: #f8fafc; }
+      .frame { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+      .guest-frame { fill: #f0f9ff; stroke: #7dd3fc; stroke-width: 2; }
+      .host-frame { fill: #f8fafc; stroke: #64748b; stroke-width: 2.5; }
+      .firmware-frame { fill: #fff7ed; stroke: #fdba74; stroke-width: 2; }
+      .hardware-frame { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 2; }
+      .component { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .memory { fill: #ecfdf5; stroke: #6ee7b7; stroke-width: 1.5; }
+      .device { fill: #faf5ff; stroke: #c4b5fd; stroke-width: 1.5; }
+      .trap { fill: #fff1f2; stroke: #fda4af; stroke-width: 1.5; }
+      .title { font-family: Arial, sans-serif; font-size: 32px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 17px; fill: #475569; }
+      .layer { font-family: Arial, sans-serif; font-size: 15px; font-weight: 700; letter-spacing: 1.5px; fill: #475569; }
+      .heading { font-family: Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #0f172a; }
+      .label { font-family: Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #1e293b; }
+      .small { font-family: Arial, sans-serif; font-size: 13px; fill: #475569; }
+      .tiny { font-family: Arial, sans-serif; font-size: 12px; font-weight: 500; fill: #64748b; }
+      .owned { font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1px; fill: #0369a1; }
+      .arrow { fill: none; stroke: #475569; stroke-width: 2.2; marker-end: url(#arrow); }
+      .trap-arrow { fill: none; stroke: #e11d48; stroke-width: 2.2; stroke-dasharray: 8 6; marker-end: url(#arrow-trap); }
+      .memory-arrow { fill: none; stroke: #059669; stroke-width: 2.2; marker-end: url(#arrow-memory); }
+      .device-arrow { fill: none; stroke: #7c3aed; stroke-width: 2.2; marker-end: url(#arrow-device); }
+      .interrupt-arrow { fill: none; stroke: #d97706; stroke-width: 2.2; marker-end: url(#arrow-interrupt); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/></marker>
+    <marker id="arrow-trap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#e11d48"/></marker>
+    <marker id="arrow-memory" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#059669"/></marker>
+    <marker id="arrow-device" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#7c3aed"/></marker>
+    <marker id="arrow-interrupt" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#d97706"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1400" height="980" rx="22"/>
+  <text class="title" x="56" y="58">Hypocaust design overview</text>
+  <text class="subtitle" x="56" y="88">No RISC-V H extension · deprivileged Guest S-mode · explicit per-VM ownership</text>
+
+  <text class="layer" x="56" y="130">GUESTS</text>
+  <g aria-label="Virtual machine zero">
+    <rect class="guest-frame" x="56" y="148" width="620" height="218" rx="16"/>
+    <text class="heading" x="82" y="181">VM 0</text>
+    <text class="owned" x="650" y="179" text-anchor="end">ISOLATION DOMAIN</text>
+    <rect class="component" x="82" y="202" width="252" height="62" rx="10"/>
+    <text class="label" x="208" y="228" text-anchor="middle">Guest user processes</text>
+    <text class="small" x="208" y="249" text-anchor="middle">virtual U-mode</text>
+    <rect class="component" x="82" y="280" width="252" height="62" rx="10"/>
+    <text class="label" x="208" y="306" text-anchor="middle">xv6-rust / Linux kernel</text>
+    <text class="small" x="208" y="327" text-anchor="middle">virtual Guest S-mode</text>
+    <path class="arrow" d="M208 264 V280"/>
+    <rect class="component" x="360" y="202" width="290" height="140" rx="10"/>
+    <text class="label" x="505" y="229" text-anchor="middle">vCPU 0 architectural state</text>
+    <text class="small" x="505" y="254" text-anchor="middle">virtual CSRs · privilege · timer deadline</text>
+    <text class="small" x="505" y="278" text-anchor="middle">pending interrupt bits · trap context</text>
+    <line x1="386" y1="296" x2="624" y2="296" stroke="#e2e8f0"/>
+    <text class="tiny" x="505" y="320" text-anchor="middle">scheduled by VcpuKey(VM 0, vCPU 0)</text>
+  </g>
+
+  <g aria-label="Virtual machine one">
+    <rect class="guest-frame" x="724" y="148" width="620" height="218" rx="16"/>
+    <text class="heading" x="750" y="181">VM 1</text>
+    <text class="owned" x="1318" y="179" text-anchor="end">ISOLATION DOMAIN</text>
+    <rect class="component" x="750" y="202" width="252" height="62" rx="10"/>
+    <text class="label" x="876" y="228" text-anchor="middle">Guest user processes</text>
+    <text class="small" x="876" y="249" text-anchor="middle">virtual U-mode</text>
+    <rect class="component" x="750" y="280" width="252" height="62" rx="10"/>
+    <text class="label" x="876" y="306" text-anchor="middle">xv6-rust / Linux kernel</text>
+    <text class="small" x="876" y="327" text-anchor="middle">virtual Guest S-mode</text>
+    <path class="arrow" d="M876 264 V280"/>
+    <rect class="component" x="1028" y="202" width="290" height="140" rx="10"/>
+    <text class="label" x="1173" y="229" text-anchor="middle">vCPU 1 architectural state</text>
+    <text class="small" x="1173" y="254" text-anchor="middle">virtual CSRs · privilege · timer deadline</text>
+    <text class="small" x="1173" y="278" text-anchor="middle">pending interrupt bits · trap context</text>
+    <line x1="1054" y1="296" x2="1292" y2="296" stroke="#e2e8f0"/>
+    <text class="tiny" x="1173" y="320" text-anchor="middle">scheduled by VcpuKey(VM 1, vCPU 1)</text>
+  </g>
+
+  <text class="layer" x="56" y="410">HYPOCAUST · HOST S-MODE</text>
+  <rect class="host-frame" x="56" y="428" width="1288" height="330" rx="16"/>
+  <rect class="component" x="82" y="458" width="292" height="112" rx="10"/>
+  <text class="label" x="228" y="487" text-anchor="middle">Host trap + instruction emulator</text>
+  <text class="small" x="228" y="513" text-anchor="middle">SBI · CSR · SRET · SFENCE.VMA</text>
+  <text class="small" x="228" y="537" text-anchor="middle">MMIO faults · exception forwarding</text>
+
+  <rect class="component" x="400" y="458" width="282" height="112" rx="10"/>
+  <text class="label" x="541" y="487" text-anchor="middle">Multi-vCPU scheduler</text>
+  <text class="small" x="541" y="513" text-anchor="middle">Ready · Running · Blocked · Stopped</text>
+  <text class="small" x="541" y="537" text-anchor="middle">Host hart ownership + targeted IPI</text>
+
+  <rect class="memory" x="708" y="458" width="610" height="112" rx="10"/>
+  <text class="label" x="1013" y="487" text-anchor="middle">Shadow paging and owned memory</text>
+  <text class="small" x="1013" y="513" text-anchor="middle">Guest Sv39 walk · GVA→GPA→HPA · ASID root cache</text>
+  <text class="small" x="1013" y="537" text-anchor="middle">write-protected PTEs · incremental sync · checked DMA ranges</text>
+
+  <rect class="device" x="82" y="598" width="600" height="126" rx="10"/>
+  <text class="label" x="382" y="628" text-anchor="middle">VM 0 DeviceBus</text>
+  <rect class="component" x="108" y="648" width="164" height="50" rx="8"/>
+  <text class="small" x="190" y="679" text-anchor="middle">virtual PLIC</text>
+  <rect class="component" x="300" y="648" width="164" height="50" rx="8"/>
+  <text class="small" x="382" y="679" text-anchor="middle">virtual UART</text>
+  <rect class="component" x="492" y="648" width="164" height="50" rx="8"/>
+  <text class="small" x="574" y="679" text-anchor="middle">VirtIO block 0</text>
+
+  <rect class="device" x="708" y="598" width="610" height="126" rx="10"/>
+  <text class="label" x="1013" y="628" text-anchor="middle">VM 1 DeviceBus</text>
+  <rect class="component" x="734" y="648" width="170" height="50" rx="8"/>
+  <text class="small" x="819" y="679" text-anchor="middle">virtual PLIC</text>
+  <rect class="component" x="932" y="648" width="170" height="50" rx="8"/>
+  <text class="small" x="1017" y="679" text-anchor="middle">virtual UART</text>
+  <rect class="component" x="1130" y="648" width="162" height="50" rx="8"/>
+  <text class="small" x="1211" y="679" text-anchor="middle">VirtIO block 1</text>
+
+  <path class="trap-arrow" d="M334 311 C370 378 260 400 228 458"/>
+  <path class="trap-arrow" d="M1002 311 C1038 378 330 388 260 458"/>
+  <path class="memory-arrow" d="M334 326 C510 390 846 402 930 458"/>
+  <path class="memory-arrow" d="M1002 326 C1120 382 1090 414 1070 458"/>
+  <path class="device-arrow" d="M208 342 C190 450 310 522 360 598"/>
+  <path class="device-arrow" d="M876 342 C860 450 970 522 990 598"/>
+  <rect x="372" y="374" width="396" height="30" rx="7" fill="#f8fafc"/>
+  <text class="tiny" x="570" y="394" text-anchor="middle" fill="#e11d48">privileged instruction · SBI ecall · page/MMIO fault</text>
+
+  <text class="layer" x="56" y="800">FIRMWARE + MACHINE</text>
+  <rect class="firmware-frame" x="56" y="818" width="360" height="98" rx="14"/>
+  <text class="heading" x="236" y="853" text-anchor="middle">OpenSBI · M-mode</text>
+  <text class="small" x="236" y="881" text-anchor="middle">boot · TIME · IPI · reset · console</text>
+  <rect class="hardware-frame" x="442" y="818" width="902" height="98" rx="14"/>
+  <text class="heading" x="468" y="853">QEMU virt</text>
+  <text class="small" x="468" y="881">Host harts 0–1</text>
+  <text class="small" x="650" y="881">VM RAM slots</text>
+  <text class="small" x="823" y="881">UART</text>
+  <text class="small" x="951" y="881">VirtIO backend 0</text>
+  <text class="small" x="1150" y="881">VirtIO backend 1</text>
+  <path class="interrupt-arrow" d="M610 818 C610 786 541 786 541 570"/>
+  <path class="interrupt-arrow" d="M574 818 V724"/>
+  <path class="interrupt-arrow" d="M1211 818 V724"/>
+
+  <g aria-label="Flow legend">
+    <line x1="58" y1="950" x2="92" y2="950" class="trap-arrow"/>
+    <text class="tiny" x="102" y="954">trap / emulation</text>
+    <line x1="250" y1="950" x2="284" y2="950" class="memory-arrow"/>
+    <text class="tiny" x="294" y="954">memory translation</text>
+    <line x1="468" y1="950" x2="502" y2="950" class="device-arrow"/>
+    <text class="tiny" x="512" y="954">MMIO / mediated I/O</text>
+    <line x1="718" y1="950" x2="752" y2="950" class="interrupt-arrow"/>
+    <text class="tiny" x="762" y="954">physical event → virtual interrupt</text>
+  </g>
+</svg>

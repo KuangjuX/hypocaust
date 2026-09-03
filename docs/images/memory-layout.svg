@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="980" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
+  <title id="title">Hypocaust memory layout</title>
+  <desc id="desc">Every virtual machine sees the same 128 MiB guest physical RAM window, translated to a disjoint Host physical RAM slot and paired shadow page-table arena. Host high virtual pages hold per-vCPU stacks, trap context, and trampoline.</desc>
+  <!-- PR #75 (feature/redesign-architecture-diagrams) makes the address-space
+       type explicit: Guest GPA, Host physical, and Host virtual addresses. -->
+  <defs>
+    <style>
+      .canvas { fill: #f8fafc; }
+      .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; }
+      .guest { fill: #e0f2fe; stroke: #38bdf8; stroke-width: 1.5; }
+      .firmware { fill: #ffedd5; stroke: #fb923c; stroke-width: 1.5; }
+      .host { fill: #e2e8f0; stroke: #64748b; stroke-width: 1.5; }
+      .vm0 { fill: #dcfce7; stroke: #22c55e; stroke-width: 1.5; }
+      .vm1 { fill: #ede9fe; stroke: #8b5cf6; stroke-width: 1.5; }
+      .reserved { fill: #f1f5f9; stroke: #94a3b8; stroke-width: 1.5; stroke-dasharray: 7 5; }
+      .gap { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; stroke-dasharray: 4 5; }
+      .special { fill: #ffe4e6; stroke: #fb7185; stroke-width: 1.5; }
+      .stack { fill: #fef3c7; stroke: #f59e0b; stroke-width: 1.5; }
+      .title { font-family: Arial, sans-serif; font-size: 32px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: Arial, sans-serif; font-size: 17px; fill: #475569; }
+      .heading { font-family: Arial, sans-serif; font-size: 20px; font-weight: 700; fill: #0f172a; }
+      .label { font-family: Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #1e293b; }
+      .small { font-family: Arial, sans-serif; font-size: 13px; fill: #475569; }
+      .address { font-family: Menlo, Consolas, monospace; font-size: 12px; font-weight: 500; fill: #334155; }
+      .axis { stroke: #64748b; stroke-width: 1.5; }
+      .tick { stroke: #94a3b8; stroke-width: 1.25; }
+      .map0 { fill: none; stroke: #16a34a; stroke-width: 2.5; marker-end: url(#arrow0); }
+      .map1 { fill: none; stroke: #7c3aed; stroke-width: 2.5; marker-end: url(#arrow1); }
+      .shadow-map { fill: none; stroke: #0284c7; stroke-width: 2; stroke-dasharray: 7 5; marker-end: url(#arrow-shadow); }
+    </style>
+    <marker id="arrow0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#16a34a"/></marker>
+    <marker id="arrow1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#7c3aed"/></marker>
+    <marker id="arrow-shadow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="#0284c7"/></marker>
+  </defs>
+
+  <rect class="canvas" width="1400" height="980" rx="22"/>
+  <text class="title" x="56" y="58">Hypocaust memory layout</text>
+  <text class="subtitle" x="56" y="88">Address-space type and half-open ranges are explicit · diagram heights are schematic</text>
+
+  <g aria-label="Guest physical address panel">
+    <rect class="panel" x="56" y="128" width="340" height="752" rx="16"/>
+    <text class="heading" x="82" y="166">Guest physical address</text>
+    <text class="small" x="82" y="190">Identical view inside every VM</text>
+
+    <line class="axis" x1="112" y1="254" x2="112" y2="650"/>
+    <line class="tick" x1="102" y1="254" x2="122" y2="254"/>
+    <line class="tick" x1="102" y1="650" x2="122" y2="650"/>
+    <text class="address" x="132" y="259">0x8800_0000</text>
+    <text class="address" x="132" y="655">0x8000_0000</text>
+    <rect class="guest" x="132" y="274" width="218" height="356" rx="10"/>
+    <text class="label" x="241" y="420" text-anchor="middle">Guest RAM</text>
+    <text class="small" x="241" y="446" text-anchor="middle">128 MiB</text>
+    <text class="small" x="241" y="474" text-anchor="middle">kernel · userspace · DTB</text>
+    <text class="small" x="241" y="497" text-anchor="middle">initramfs · page tables · DMA</text>
+
+    <rect class="guest" x="82" y="702" width="268" height="118" rx="9"/>
+    <text class="label" x="216" y="732" text-anchor="middle">Guest Sv39 view</text>
+    <text class="small" x="216" y="758" text-anchor="middle">GVA → Guest-owned PTEs → GPA</text>
+    <text class="small" x="216" y="782" text-anchor="middle">Hypocaust validates the full range,</text>
+    <text class="small" x="216" y="804" text-anchor="middle">then installs an owned HPA leaf.</text>
+    <text class="small" x="82" y="850">Linux and xv6-rust may choose different</text>
+    <text class="small" x="82" y="869">GVAs; their physical window is identical.</text>
+  </g>
+
+  <g aria-label="Host physical address panel">
+    <rect class="panel" x="438" y="128" width="516" height="752" rx="16"/>
+    <text class="heading" x="464" y="166">Host physical address</text>
+    <text class="small" x="464" y="190">Disjoint RAM ownership + paired shadow arenas</text>
+
+    <text class="address" x="476" y="230">0x8000_0000</text>
+    <rect class="firmware" x="602" y="210" width="300" height="48" rx="7"/>
+    <text class="label" x="752" y="239" text-anchor="middle">OpenSBI · 2 MiB</text>
+    <text class="address" x="476" y="280">0x8020_0000</text>
+    <rect class="host" x="602" y="260" width="300" height="98" rx="7"/>
+    <text class="label" x="752" y="301" text-anchor="middle">Hypocaust Host</text>
+    <text class="small" x="752" y="326" text-anchor="middle">code · data · heap · Host page tables</text>
+    <text class="address" x="476" y="380">0x8800_0000</text>
+    <rect class="vm0" x="602" y="360" width="300" height="88" rx="7"/>
+    <text class="label" x="752" y="399" text-anchor="middle">VM 0 RAM backing</text>
+    <text class="small" x="752" y="424" text-anchor="middle">128 MiB · active</text>
+    <text class="address" x="476" y="470">0x9000_0000</text>
+    <rect class="vm1" x="602" y="450" width="300" height="88" rx="7"/>
+    <text class="label" x="752" y="489" text-anchor="middle">VM 1 RAM backing</text>
+    <text class="small" x="752" y="514" text-anchor="middle">128 MiB · active</text>
+    <text class="address" x="476" y="560">0x9800_0000</text>
+    <rect class="reserved" x="602" y="540" width="300" height="70" rx="7"/>
+    <text class="label" x="752" y="571" text-anchor="middle">VM 2 RAM slot</text>
+    <text class="small" x="752" y="594" text-anchor="middle">128 MiB · reserved</text>
+    <text class="address" x="476" y="632">0xa000_0000</text>
+    <rect class="gap" x="602" y="612" width="300" height="54" rx="7"/>
+    <text class="small" x="752" y="644" text-anchor="middle">unallocated gap / platform space</text>
+    <text class="address" x="476" y="688">0x1_0000_0000</text>
+    <rect class="vm0" x="602" y="668" width="300" height="52" rx="7"/>
+    <text class="label" x="752" y="699" text-anchor="middle">VM 0 shadow arena · 128 MiB</text>
+    <text class="address" x="476" y="742">0x1_0800_0000</text>
+    <rect class="vm1" x="602" y="722" width="300" height="52" rx="7"/>
+    <text class="label" x="752" y="753" text-anchor="middle">VM 1 shadow arena · 128 MiB</text>
+    <text class="address" x="476" y="796">0x1_1000_0000</text>
+    <rect class="reserved" x="602" y="776" width="300" height="52" rx="7"/>
+    <text class="label" x="752" y="807" text-anchor="middle">VM 2 shadow arena · reserved</text>
+    <text class="address" x="476" y="850">0x1_1800_0000</text>
+  </g>
+
+  <g aria-label="Host-controlled high virtual address panel">
+    <rect class="panel" x="996" y="128" width="348" height="752" rx="16"/>
+    <text class="heading" x="1022" y="166">Host-controlled high VA</text>
+    <text class="small" x="1022" y="190">Separate Sv39 roots can reuse the same VA</text>
+
+    <text class="small" x="1022" y="220">vCPU execution root</text>
+
+    <rect class="special" x="1022" y="234" width="296" height="78" rx="9"/>
+    <text class="label" x="1170" y="264" text-anchor="middle">Trampoline · 4 KiB</text>
+    <text class="address" x="1170" y="290" text-anchor="middle">0xffff_ffff_ffff_f000</text>
+    <rect class="special" x="1022" y="324" width="296" height="78" rx="9"/>
+    <text class="label" x="1170" y="354" text-anchor="middle">Trap context · 4 KiB</text>
+    <text class="address" x="1170" y="380" text-anchor="middle">0xffff_ffff_ffff_e000</text>
+
+    <line x1="1022" y1="430" x2="1318" y2="430" stroke="#e2e8f0" stroke-width="1.5"/>
+    <text class="small" x="1022" y="460">Host kernel root</text>
+    <rect class="stack" x="1022" y="488" width="296" height="72" rx="9"/>
+    <text class="label" x="1170" y="518" text-anchor="middle">vCPU 0 Host kernel stack</text>
+    <text class="small" x="1170" y="542" text-anchor="middle">16 KiB</text>
+    <rect class="gap" x="1022" y="568" width="296" height="34" rx="7"/>
+    <text class="small" x="1170" y="590" text-anchor="middle">guard · 4 KiB</text>
+    <rect class="stack" x="1022" y="610" width="296" height="72" rx="9"/>
+    <text class="label" x="1170" y="640" text-anchor="middle">vCPU 1 Host kernel stack</text>
+    <text class="small" x="1170" y="664" text-anchor="middle">16 KiB</text>
+    <path d="M1170 698 V736" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 5"/>
+    <text class="small" x="1170" y="758" text-anchor="middle">additional vCPU stacks</text>
+    <text class="small" x="1170" y="782" text-anchor="middle">descend from TRAMPOLINE</text>
+    <text class="small" x="1170" y="830" text-anchor="middle">Trap context and stack VAs may overlap</text>
+    <text class="small" x="1170" y="852" text-anchor="middle">because they live in different roots.</text>
+  </g>
+
+  <path class="map0" d="M350 390 C410 390 528 404 598 404"/>
+  <path class="map1" d="M350 514 C420 514 520 494 598 494"/>
+  <path class="shadow-map" d="M350 612 C390 678 406 710 470 710 C526 710 554 694 598 694"/>
+
+  <g aria-label="Memory legend">
+    <rect class="vm0" x="58" y="922" width="20" height="20" rx="3"/><text class="small" x="88" y="937">VM 0 ownership</text>
+    <rect class="vm1" x="252" y="922" width="20" height="20" rx="3"/><text class="small" x="282" y="937">VM 1 ownership</text>
+    <rect class="reserved" x="446" y="922" width="20" height="20" rx="3"/><text class="small" x="476" y="937">reserved capacity</text>
+    <rect class="special" x="658" y="922" width="20" height="20" rx="3"/><text class="small" x="688" y="937">trap machinery</text>
+    <text class="address" x="1108" y="937">all ranges are [start, end)</text>
+  </g>
+</svg>
