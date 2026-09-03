@@ -27,6 +27,7 @@ const VIRTIO_BLOCK_GPA: usize = 0x1000_1000;
 const VIRTIO_MMIO_SIZE: usize = 0x1000;
 const PLIC_PHANDLE: u32 = 1;
 const CPU_INTC_PHANDLE: u32 = 2;
+const MACHINE_EXTERNAL_INTERRUPT: u32 = 11;
 const SUPERVISOR_EXTERNAL_INTERRUPT: u32 = 9;
 
 /// Optional Linux boot data published through the Guest `/chosen` node.
@@ -295,11 +296,17 @@ pub fn install_configured_guest_fdt(
     fdt.property_u32("#interrupt-cells", 1);
     fdt.property_u32("phandle", PLIC_PHANDLE);
     fdt.property_u32("riscv,ndev", 31);
-    // PR #52 connects the virtual PLIC to the Guest CPU's supervisor external
-    // interrupt context, which lets Linux bind its PLIC interrupt domain.
+    // PR #69 (`fix-bug/linux-plic-context-topology`) preserves QEMU's context
+    // numbering in the virtual topology. Linux skips the inaccessible M-mode
+    // context 0 and binds S-mode to the emulated context 1 register windows.
     fdt.property_cells(
         "interrupts-extended",
-        &[CPU_INTC_PHANDLE, SUPERVISOR_EXTERNAL_INTERRUPT],
+        &[
+            CPU_INTC_PHANDLE,
+            MACHINE_EXTERNAL_INTERRUPT,
+            CPU_INTC_PHANDLE,
+            SUPERVISOR_EXTERNAL_INTERRUPT,
+        ],
     );
     fdt.end_node();
 
@@ -366,7 +373,20 @@ pub fn install_configured_guest_fdt(
     let plic = installed
         .find_node("/soc/plic@c000000")
         .expect("Guest FDT has no PLIC");
-    assert!(plic.property("interrupts-extended").is_some());
+    // PR #69 locks the QEMU-compatible context order into the serialized FDT:
+    // M-external context 0 precedes S-external context 1 for Guest hart 0.
+    let contexts = plic
+        .property("interrupts-extended")
+        .expect("Guest PLIC has no interrupt contexts");
+    assert_eq!(
+        contexts.value,
+        &[
+            0, 0, 0, CPU_INTC_PHANDLE as u8,
+            0, 0, 0, MACHINE_EXTERNAL_INTERRUPT as u8,
+            0, 0, 0, CPU_INTC_PHANDLE as u8,
+            0, 0, 0, SUPERVISOR_EXTERNAL_INTERRUPT as u8,
+        ],
+    );
     let chosen = installed
         .find_node("/chosen")
         .expect("Guest FDT has no /chosen node");
