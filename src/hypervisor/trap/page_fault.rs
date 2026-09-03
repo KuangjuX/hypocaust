@@ -102,7 +102,16 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(
             // expose A-extension variants.
             _ => match emulate_pte_amo(guest, ctx, sepc, guest_va, old_pte.bits) {
                 Some(write) => write,
-                None => return false,
+                None => {
+                    // PR #70 (`fix-bug/release-shadow-page-table-aliases`)
+                    // treats a non-PTE store to a count-zero tracked page as
+                    // allocator reuse. Do not advance sepc: after restoring
+                    // aliases, hardware retries the original ordinary store.
+                    if guest.release_reused_page_table(guest_pte_gpa) {
+                        return true;
+                    }
+                    return false;
+                }
             },
         };
         let pte = PageTableEntry { bits: write.new_bits };

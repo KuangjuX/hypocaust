@@ -165,6 +165,18 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
         });
     }
 
+    /// Stop classifying an empty page as page-table storage once an ordinary
+    /// non-PTE store proves Linux has recycled it. PR #70 deliberately does
+    /// not release at count zero alone because linked tables may be repopulated.
+    fn release_reused_page_table(&mut self, gpa: usize) -> bool {
+        let vpn = VirtPageNum::from(gpa >> 12);
+        if self.valid_pte_counts.get(&vpn).copied() != Some(0) {
+            return false;
+        }
+        self.valid_pte_counts.remove(&vpn);
+        true
+    }
+
     /// PR #27 (`feature/track-valid-pte-count`) updates the page's V=1
     /// population in O(1). A page first discovered through a trapped write is
     /// counted once from its updated contents, then follows the incremental path.
@@ -413,6 +425,27 @@ pub(crate) fn superpage_self_test() {
         Some(special_ppn),
         "Host-private shadow leaves must be idempotent",
     );
+
+    // PR #70 reproduces the two-phase page-reuse lifecycle. Count zero alone
+    // is not enough because a linked empty table may receive another PTE; an
+    // ordinary non-PTE store is the evidence that releases its classification.
+    let released_vpn = VirtPageNum::from(GUEST_KERNEL_VIRT_START >> 12);
+    let mut tracking = ShadowPageTables::<crate::page_table::PageTableSv39>::new();
+    tracking.record_page_table_pages(&[GuestPageTablePageState {
+        vpn: released_vpn,
+        valid_pte_count: 1,
+    }]);
+    let old_pte = PageTableEntry::new(PhysPageNum::from(1), PTEFlags::V);
+    let (remaining, fallback) =
+        tracking.update_valid_pte_count(released_vpn, old_pte, PageTableEntry::empty(), || 0);
+    assert_eq!((remaining, fallback), (0, false));
+    assert!(tracking.tracks_page_table_page(released_vpn.0 << 12));
+    assert!(tracking.release_reused_page_table(released_vpn.0 << 12));
+    assert!(
+        !tracking.tracks_page_table_page(released_vpn.0 << 12),
+        "recycled page-table pages must leave the tracking set",
+    );
+    assert!(!tracking.release_reused_page_table(released_vpn.0 << 12));
 }
 
 
@@ -479,14 +512,59 @@ fn protect_page_table_aliases<P: PageTable>(
     protected_aliases
 }
 
-fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, valid_pte_count: usize) {
-    if valid_pte_count == 0 {
-        // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
-        // 将影子页表设置为可读可写
-        if let Some(spt_pte) = spt.find_pte(VirtPageNum::from(va >> 12)) {
-            *spt_pte = PageTableEntry::new(spt_pte.ppn(), PTEFlags::R | PTEFlags::W | PTEFlags::U | PTEFlags::V);
+/// Restore every shadow alias after an empty Guest page leaves the tracking
+/// set. PR #70 rebuilds each leaf from that root's authoritative Guest PTE, so
+/// Linux gets its original permissions instead of a blanket writable mapping.
+fn restore_released_page_aliases<P: PageTable + PageDebug>(
+    shadow_page_tables: &ShadowPageTables<P>,
+    guest_memory: &GuestMemory,
+    released_vpn: VirtPageNum,
+) -> usize {
+    let released_gpa = released_vpn.0 << 12;
+    let Some(released_hpa) = guest_memory.translate_range(released_gpa, PAGE_SIZE) else {
+        return 0;
+    };
+    let released_hppn = PhysPageNum::from(released_hpa >> 12);
+    let mut restored = 0;
+
+    for (guest_satp, cached) in shadow_page_tables.spts().iter_mut() {
+        let guest_root_gpa = (guest_satp & 0xfff_ffff_ffff) << 12;
+        let mut queue = VecDeque::new();
+        queue.push_back((cached.page_table.root_ppn(), 0usize, 0usize));
+        while let Some((page_table_ppn, level, virtual_prefix)) = queue.pop_front() {
+            for (index, pte) in page_table_ppn.get_pte_array().iter_mut().enumerate() {
+                if !pte.is_valid() {
+                    continue;
+                }
+                let entry_vpn = virtual_prefix | (index << ((2 - level) * 9));
+                if is_leaf(*pte) {
+                    if level != 2 || pte.ppn() != released_hppn {
+                        continue;
+                    }
+                    let guest_translation = translate_guest_address::<P>(
+                        guest_memory,
+                        guest_root_gpa,
+                        entry_vpn << 12,
+                    );
+                    if let Some(translation) = guest_translation.filter(|translation| {
+                        translation.guest_pa & !(PAGE_SIZE - 1) == released_gpa
+                    }) {
+                        // PR #70 never lets an obsolete cached root clear a
+                        // shared leaf before a live root can restore it. Only
+                        // an authoritative matching Guest mapping may mutate it.
+                        *pte = PageTableEntry::new(
+                            released_hppn,
+                            translation.pte.flags() | PTEFlags::U | PTEFlags::V,
+                        );
+                        restored += 1;
+                    }
+                } else if level < 2 {
+                    queue.push_back((pte.ppn(), level + 1, entry_vpn));
+                }
+            }
         }
     }
+    restored
 }
 
 /// 收集所有页表的虚拟页号
@@ -768,6 +846,36 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             .map(|translation| translation.guest_pa)
     }
 
+    /// Release a count-zero page after a non-PTE store proves that the Guest
+    /// allocator has recycled it. PR #70 restores every cached shadow alias
+    /// before retrying the original instruction at the same Guest PC.
+    pub fn release_reused_page_table(&mut self, gpa: usize) -> bool {
+        if !self
+            .shadow_state
+            .shadow_page_tables
+            .release_reused_page_table(gpa)
+        {
+            return false;
+        }
+        let restored = restore_released_page_aliases(
+            &self.shadow_state.shadow_page_tables,
+            &self.guest_memory,
+            VirtPageNum::from(gpa >> 12),
+        );
+        if restored == 0 {
+            // PR #70 keeps the classification when no authoritative Guest
+            // mapping can restore an alias; forwarding is safer than silently
+            // allowing a still-linked page table to become writable.
+            self.shadow_state
+                .shadow_page_tables
+                .valid_pte_counts
+                .insert(VirtPageNum::from(gpa >> 12), 0);
+            return false;
+        }
+        self.shadow_state.shadow_page_tables.mark_all_tlb_dirty();
+        true
+    }
+
     pub fn translate_guest_ppte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {
         self.memory_set.translate(vpn)
     }
@@ -998,7 +1106,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             panic!("Page Table Entry aligned?");
         }
         let page_vpn = VirtPageNum::from(va >> 12);
-        let (valid_pte_count, fallback_scan) = self
+        let (_valid_pte_count, fallback_scan) = self
             .shadow_state
             .shadow_page_tables
             .update_valid_pte_count(page_vpn, old_pte, pte, || {
@@ -1034,15 +1142,17 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                 newly_linked_page_table = Some(child_state);
             }
         }
-        // 获得影子页表
-        let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();
         if !pte.is_valid() {
             // PR #21 (fix-bug/invalid-pte-synchronization): mirror every V=0 encoding,
             // including allocator metadata, and release pages with no valid PTEs.
             unsafe{ core::ptr::write(host_pa as *mut usize, pte.bits as usize) };
-            // 消除页表映射，将页表内存修改为可读可写
-            clear_page_table(guest_spt, va, valid_pte_count);
         }else {
+            // 获得影子页表
+            let guest_spt = self
+                .shadow_state
+                .shadow_page_tables
+                .guest_page_table()
+                .unwrap();
             // 如果页表项对齐且物理页号不为零表示进行页表映射
             let index = (host_pa & 0xfff) / core::mem::size_of::<PageTableEntry>();
             let pte_array = host_ppn.get_pte_array();
