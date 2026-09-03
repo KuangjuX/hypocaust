@@ -47,6 +47,19 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
         match inst {
+            riscv_decode::Instruction::Sb(i) => {
+                let rs1 = i.rs1() as usize;
+                let rs2 = i.rs2() as usize;
+                let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
+                let Some(guest_pa) = fault_gpa(vaddr, fault_guest_va, fault_guest_pa) else {
+                    return false;
+                };
+                // PR #71 adds the byte-width store required by NS16550A while
+                // preserving the same validated GVA-to-GPA boundary as u32 MMIO.
+                if !device_bus.write_u8(guest_pa, register_value(ctx, rs2) as u8) {
+                    return false;
+                }
+            },
             riscv_decode::Instruction::Sw(i) => {
                 let rs1 = i.rs1() as usize;
                 let rs2 = i.rs2() as usize;
@@ -85,6 +98,24 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
                 };
                 if i.rd() != 0 {
                     ctx.x[i.rd() as usize] = value as usize;
+                }
+            }
+            riscv_decode::Instruction::Lb(i) | riscv_decode::Instruction::Lbu(i) => {
+                let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
+                let Some(guest_pa) = fault_gpa(vaddr, fault_guest_va, fault_guest_pa) else {
+                    return false;
+                };
+                let Some(value) = device_bus.read_u8(guest_pa) else {
+                    return false;
+                };
+                // PR #71 distinguishes LB sign extension from LBU zero extension
+                // even though Linux's 8250 register accessor normally uses LBU.
+                if i.rd() != 0 {
+                    ctx.x[i.rd() as usize] = if matches!(inst, riscv_decode::Instruction::Lb(_)) {
+                        value as i8 as isize as usize
+                    } else {
+                        value as usize
+                    };
                 }
             }
             // PR #48 forwards unsupported Guest MMIO widths/instructions as

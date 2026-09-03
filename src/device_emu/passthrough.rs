@@ -10,7 +10,7 @@ use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
 use crate::guest::GuestMemory;
 use crate::identity::VmId;
 
-use super::{MmioAssignment, PLIC_GPA, PLIC_SIZE};
+use super::{MmioAssignment, PLIC_GPA, PLIC_SIZE, UART_GPA, UART_IRQ, UART_SIZE};
 
 const MAX_PASSTHROUGH_DEVICES: usize = 16;
 
@@ -133,6 +133,12 @@ impl PassthroughAssignment {
         if self.mmio.overlaps(virtual_plic) {
             return Err(PassthroughConfigError::VirtualPlicOverlap);
         }
+        // PR #71 keeps passthrough devices from replacing either half of the
+        // VM-local UART contract: its MMIO aperture and virtual PLIC source.
+        let virtual_uart = MmioAssignment::new(UART_GPA, UART_GPA, UART_SIZE);
+        if self.mmio.overlaps(virtual_uart) {
+            return Err(PassthroughConfigError::VirtualUartOverlap);
+        }
         let mmio_end = self.mmio.guest_base + self.mmio.size;
         if self.mmio.guest_base < guest_memory.guest_end()
             && guest_memory.guest_base() < mmio_end
@@ -154,6 +160,9 @@ impl PassthroughAssignment {
         if self.interrupt.host_irq == 0 || self.interrupt.guest_source == 0 {
             return Err(PassthroughConfigError::InvalidInterrupt);
         }
+        if self.interrupt.guest_source == UART_IRQ {
+            return Err(PassthroughConfigError::VirtualUartInterrupt);
+        }
         if self.interrupt.guest_context >= MAX_HOST_HARTS {
             return Err(PassthroughConfigError::InvalidGuestContext);
         }
@@ -168,11 +177,13 @@ pub enum PassthroughConfigError {
     MmioOverflow,
     UnalignedMmio,
     VirtualPlicOverlap,
+    VirtualUartOverlap,
     GuestRamOverlap,
     EmptyDmaAperture,
     UnalignedDmaAperture,
     DmaOutsideGuestRam,
     InvalidInterrupt,
+    VirtualUartInterrupt,
     InvalidGuestContext,
 }
 
@@ -335,6 +346,24 @@ pub(crate) fn self_test() {
         MmioAssignment::new(0x1000_1000, 0x2000_0000, 0x1000),
         DmaAperture::new(vm0.guest_base(), 0x1000),
         InterruptRemap::new(32, 1, 0),
+    );
+    // PR #71 verifies that neither the virtual UART page nor IRQ 10 can be
+    // reassigned to a physical device by a later board adapter.
+    let uart_mmio = PassthroughAssignment {
+        mmio: MmioAssignment::new(UART_GPA, 0x2000_2000, PAGE_SIZE),
+        ..assignment
+    };
+    assert_eq!(
+        uart_mmio.validate(&vm0),
+        Err(PassthroughConfigError::VirtualUartOverlap),
+    );
+    let uart_irq = PassthroughAssignment {
+        interrupt: InterruptRemap::new(32, UART_IRQ, 0),
+        ..assignment
+    };
+    assert_eq!(
+        uart_irq.validate(&vm0),
+        Err(PassthroughConfigError::VirtualUartInterrupt),
     );
     let mut manager = PassthroughManager::new(SelfTestAdapter { active: 0 });
     assert_eq!(manager.assign(assignment, &vm0), Ok(()));
