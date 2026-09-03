@@ -294,6 +294,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             csr::sstatus => Some(shadow_state.csrs.sstatus),
             csr::stvec => Some(shadow_state.csrs.stvec),
             csr::sie => Some(shadow_state.csrs.sie),
+            // PR #63 (`fix-bug/sip-csr-readback`) lets CSRRW obtain the old
+            // pending-interrupt value before Linux clears sip during early boot.
+            csr::sip => Some(shadow_state.csrs.sip),
             csr::sscratch => Some(shadow_state.csrs.sscratch),
             csr::sepc => Some(shadow_state.csrs.sepc),
             csr::scause => Some(shadow_state.csrs.scause),
