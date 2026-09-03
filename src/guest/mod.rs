@@ -259,7 +259,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
 
     /// PR #26 (`feature/shadow-page-table-asid`) selects the next guest token
     /// and consumes any pending ASID-scoped flush for that shadow root.
-    pub fn prepare_user_token(&mut self) -> (usize, Option<usize>) {
+    pub fn prepare_user_token(&mut self) -> (usize, Option<usize>, usize) {
         let guest_satp = self.shadow_state.csrs.satp;
         let (token, flush_asid) = match self.shadow() {
             // PR #26 (`feature/shadow-page-table-asid`) keeps bare mappings on
@@ -271,7 +271,10 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             PageTableRoot::UVA => (self.shadow_state.shadow_page_tables.page_tables[2].unwrap(), self.shadow_state.shadow_page_tables.take_tlb_flush(guest_satp)),
         };
         self.shadow_state.shadow_paging_stats.record_tlb_decision(flush_asid.is_some());
-        (token, flush_asid)
+        // PR #64 returns the effective counter permission together with the
+        // selected address space so one trap return cannot mix vCPU state.
+        let scounteren = self.shadow_state.csrs.effective_scounteren(self.smode);
+        (token, flush_asid, scounteren)
     }
 
     /// 用来检查应当使用哪一级的影子页表
@@ -302,6 +305,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             csr::scause => Some(shadow_state.csrs.scause),
             csr::stval => Some(shadow_state.csrs.stval),
             csr::satp => Some(shadow_state.csrs.satp),
+            csr::scounteren => Some(shadow_state.csrs.scounteren),
             _ => None,
         }
     }
@@ -340,6 +344,9 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             csr::sepc => shadow_state.csrs.sepc = val,
             csr::scause => shadow_state.csrs.scause = val,
             csr::stval => shadow_state.csrs.stval = val,
+            // PR #64 virtualizes Linux's early supervisor counter policy and
+            // keeps it local to the current vCPU.
+            csr::scounteren => shadow_state.csrs.set_scounteren(val),
             csr::satp => { 
                 let satp = val;
                 match (satp >> 60) & 0xf {
