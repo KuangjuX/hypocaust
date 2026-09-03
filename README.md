@@ -23,7 +23,9 @@ frontend, VirtIO queue state, and writable disk image.
 > compatibility guarantee. See [Security and isolation](#security-and-isolation)
 > and [Known limitations](#known-limitations).
 
-![Hypocaust architecture](docs/images/hypocaust.png)
+<!-- PR #75 replaces the pre-multi-Guest overview with an ownership-oriented,
+     source-controlled vector diagram that matches the validated design. -->
+![Hypocaust design overview](docs/images/design-overview.svg)
 
 ## Project status
 
@@ -285,7 +287,9 @@ gdb-multiarch target/riscv64gc-unknown-none-elf/debug/hypocaust
 
 Each active Guest sees its own RAM at `0x8000_0000..0x8800_0000`. Host
 trampoline and trap-context pages occupy the top two canonical virtual pages.
-See the [memory layout diagram](docs/images/layout.png).
+<!-- PR #75 separates Guest physical, Host physical, and Host virtual address
+     spaces so identical numeric addresses are not mistaken for aliases. -->
+See the [memory layout diagram](docs/images/memory-layout.svg).
 
 ## Security and isolation
 
