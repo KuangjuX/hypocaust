@@ -39,7 +39,8 @@ mod hypervisor;
 use crate::constants::layout::{MAX_HOST_HARTS, PAGE_SIZE};
 use crate::device_emu::DeviceBusConfig;
 use crate::guest::{
-    install_guest_fdt, GuestPayload, VcpuBootConfig, VirtualMachine, VmConfig,
+    install_configured_guest_fdt, install_guest_fdt, install_guest_initrd,
+    GuestFdtConfig, GuestPayload, VcpuBootConfig, VirtualMachine, VmConfig,
 };
 use crate::hypervisor::{HYPOCAUST, HYPERVISOR_MEMORY};
 use crate::identity::{GuestHartId, HartId, VcpuId, VmId};
@@ -54,6 +55,27 @@ static GUEST_KERNEL: [u8;include_bytes!("../guest_kernel").len()] =
 
  #[cfg(not(feature = "embed_guest_kernel"))]
  static GUEST_KERNEL: [u8; 0] = [];
+
+#[link_section = ".initrd"]
+#[cfg(feature = "linux_guest")]
+// PR #62 embeds the local example initramfs next to the Guest kernel. The file
+// is generated or downloaded by the Linux example workflow and is never Git-owned.
+static GUEST_INITRD: [u8; include_bytes!("../linux_initrd").len()] =
+    *include_bytes!("../linux_initrd");
+
+#[cfg(feature = "linux_guest")]
+fn embedded_guest_initrd() -> Option<&'static [u8]> {
+    Some(&GUEST_INITRD)
+}
+
+#[cfg(not(feature = "linux_guest"))]
+fn embedded_guest_initrd() -> Option<&'static [u8]> {
+    None
+}
+
+/// PR #62 selects an SBI early console that remains active until a later PR
+/// adds the production virtual UART used by the interactive Linux console.
+const LINUX_BOOTARGS: &str = "earlycon=sbi keep_bootcon loglevel=8";
 
 const HART_BOOT_STACK_SIZE: usize = 16 * PAGE_SIZE;
 
@@ -160,7 +182,41 @@ pub fn hentry(raw_hart_id: usize, device_tree_blob: usize) -> ! {
                 } = MemorySet::load_guest_kernel(payload, vm.guest_memory());
                 mm::vm_init(&guest_kernel_memory);
                 mm::guest_kernel_test(vm.guest_memory());
-                let guest_fdt = install_guest_fdt(vm.guest_memory(), guest_hart_id);
+                let guest_fdt = match payload {
+                    GuestPayload::Elf(_) => {
+                        install_guest_fdt(vm.guest_memory(), guest_hart_id)
+                    }
+                    GuestPayload::LinuxImage(image) => {
+                        let initrd = embedded_guest_initrd().map(|bytes| {
+                            install_guest_initrd(vm.guest_memory(), bytes)
+                        });
+                        if let Some(range) = initrd {
+                            let text_offset = usize::try_from(image.text_offset())
+                                .expect("Linux Image text offset exceeds usize");
+                            let image_size = usize::try_from(image.image_size())
+                                .expect("Linux Image size exceeds usize")
+                                .max(image.bytes().len());
+                            let image_end = vm
+                                .guest_memory()
+                                .guest_base()
+                                .checked_add(text_offset)
+                                .and_then(|start| start.checked_add(image_size))
+                                .expect("Linux Image occupied range overflow");
+                            assert!(
+                                image_end <= range.start_gpa,
+                                "Linux Image overlaps the initramfs",
+                            );
+                        }
+                        install_configured_guest_fdt(
+                            vm.guest_memory(),
+                            GuestFdtConfig::linux(
+                                guest_hart_id,
+                                LINUX_BOOTARGS,
+                                initrd,
+                            ),
+                        )
+                    }
+                };
                 let user_guest_kernel_memory =
                     MemorySet::create_user_guest_kernel(&guest_kernel_memory);
                 vm.add_vcpu(
