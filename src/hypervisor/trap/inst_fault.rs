@@ -10,7 +10,7 @@ use crate::page_table::PageTable;
 use crate::sbi::set_timer;
 use crate::guest::sbi::{
     dispatch_modern, SbiAction, SBI_CONSOLE_GETCHAR, SBI_CONSOLE_PUTCHAR,
-    SBI_SET_TIMER, SBI_SHUTDOWN,
+    SBI_ERR_INVALID_PARAM, SBI_SET_TIMER, SBI_SHUTDOWN,
 };
 use crate::guest::{Vcpu, VirtualInterrupt};
 
@@ -45,7 +45,7 @@ pub fn ifault<P: PageTable + PageDebug>(
                 let arguments = [
                     ctx.x[10], ctx.x[11], ctx.x[12], ctx.x[13], ctx.x[14], ctx.x[15],
                 ];
-                if let Some(response) = dispatch_modern(ctx.x[17], ctx.x[16], arguments) {
+                if let Some(mut response) = dispatch_modern(ctx.x[17], ctx.x[16], arguments) {
                     match response.action {
                         SbiAction::None => {}
                         SbiAction::SetTimer(stime) => program_guest_timer(guest, stime),
@@ -54,6 +54,35 @@ pub fn ifault<P: PageTable + PageDebug>(
                         // the same scheduler path as legacy shutdown.
                         SbiAction::StopCurrentVm => {
                             return InstructionOutcome::StopCurrentVm;
+                        }
+                        // PR #61 completes DBCN only after the pure decoder has
+                        // handed the operation to this VM's console and RAM.
+                        SbiAction::DebugConsoleWrite {
+                            num_bytes,
+                            base_addr_lo,
+                            base_addr_hi,
+                        } => match device_bus.debug_console_write(
+                            num_bytes,
+                            base_addr_lo,
+                            base_addr_hi,
+                        ) {
+                            Some(written) => response.value = written,
+                            None => response.error = SBI_ERR_INVALID_PARAM,
+                        },
+                        SbiAction::DebugConsoleRead {
+                            num_bytes,
+                            base_addr_lo,
+                            base_addr_hi,
+                        } => match device_bus.debug_console_read(
+                            num_bytes,
+                            base_addr_lo,
+                            base_addr_hi,
+                        ) {
+                            Some(read) => response.value = read,
+                            None => response.error = SBI_ERR_INVALID_PARAM,
+                        },
+                        SbiAction::DebugConsoleWriteByte(byte) => {
+                            device_bus.console_putchar(byte as usize);
                         }
                     }
                     ctx.x[10] = response.error;

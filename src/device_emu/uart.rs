@@ -53,6 +53,14 @@ impl Uart {
         self.line_buffer.push(byte);
     }
 
+    /// PR #61 (`feature/sbi-dbcn-console`) preserves per-VM line labelling
+    /// while accepting one complete DBCN transfer from the Guest.
+    pub fn write_console_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_console_byte(*byte);
+        }
+    }
+
     /// PR #49 flushes a partial prompt before polling for input. Only the VM
     /// selected by the Host console focus can consume physical console bytes.
     pub fn read_console_byte(&mut self) -> usize {
@@ -64,6 +72,27 @@ impl Uart {
         } else {
             NO_INPUT
         }
+    }
+
+    /// PR #61 implements DBCN's non-blocking bulk read. A VM without console
+    /// focus, or a focused VM with no pending input, returns a short transfer.
+    pub fn read_console_bytes(&mut self, bytes: &mut [u8]) -> usize {
+        if !self.line_buffer.is_empty() {
+            self.flush_console(false);
+        }
+        if CONSOLE_FOCUS_VM.load(Ordering::Acquire) != self.vm_id.index() {
+            return 0;
+        }
+        let mut read = 0;
+        while read < bytes.len() {
+            let byte = console_getchar();
+            if byte == NO_INPUT {
+                break;
+            }
+            bytes[read] = byte as u8;
+            read += 1;
+        }
+        read
     }
 
     fn flush_console(&mut self, newline: bool) {
@@ -93,5 +122,6 @@ pub(crate) fn self_test() {
     let mut uart = Uart::new(VmId::new(0));
     uart.write_console_byte(b'O');
     uart.write_console_byte(b'K');
-    assert_eq!(uart.line_buffer.as_slice(), b"OK");
+    uart.write_console_bytes(b" bulk");
+    assert_eq!(uart.line_buffer.as_slice(), b"OK bulk");
 }
