@@ -32,11 +32,12 @@ QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 QEMUOPTS += -drive file=$(FS_VM1_IMG),if=none,format=raw,id=x1
 QEMUOPTS += -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1
 
-.PHONY: help build xv6-rust qemu qemu-xv6 qemu-gdb gdb debug asm clean check-xv6-rust
+.PHONY: help build xv6-rust qemu qemu-xv6 qemu-linux qemu-gdb gdb debug asm clean check-xv6-rust
 
 help:
 	@echo "Hypocaust build targets:"
 	@echo "  make qemu-xv6                    build xv6-rust, copy its artifacts, and boot"
+	@echo "  make qemu-linux                  download Alpine and boot initramfs shells"
 	@echo "  make xv6-rust                    refresh guest_kernel and per-VM disks"
 	@echo "  make qemu                        boot using existing local guest artifacts"
 	@echo "  make qemu SMP=2                  boot with two Host harts"
@@ -85,6 +86,11 @@ qemu: build
 
 qemu-xv6: xv6-rust build
 	$(QEMU) $(QEMUOPTS)
+
+# PR #73 keeps the Linux artifact workflow in examples/linux and delegates
+# back to the common QEMU runner only after verified inputs are installed.
+qemu-linux:
+	$(MAKE) -C examples/linux run
 
 qemu-gdb: build
 	$(QEMU) $(QEMUOPTS) -S -gdb tcp::1234
