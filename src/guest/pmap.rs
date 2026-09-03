@@ -4,7 +4,10 @@ use core::cell::UnsafeCell;
 
 use crate::debug::PageDebug;
 use crate::hypervisor::HYPERVISOR_MEMORY;
-use crate::page_table::{PageTable, VirtPageNum, PageTableEntry, PhysPageNum, PTEFlags};
+use crate::page_table::{
+    translate_guest_address, PageTable, PageTableEntry, PhysPageNum, PTEFlags,
+    VirtPageNum,
+};
 use crate::constants::layout::{GUEST_KERNEL_VIRT_START, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT};
 
 use super::{GuestMemory, Vcpu};
@@ -750,6 +753,19 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             return Some((pte.ppn(). 0 << 12) + offset)
         }
         None
+    }
+
+    /// Translate a Guest virtual address into the Guest-physical address space.
+    /// PR #68 (`fix-bug/plic-mmio-shadow-fault`) keeps this separate from
+    /// `translate_guest_vaddr`, whose result is a Host address and therefore
+    /// cannot represent emulated MMIO outside the VM's RAM slot.
+    pub fn translate_guest_vaddr_to_gpa(&self, vaddr: usize) -> Option<usize> {
+        if self.shadow() == PageTableRoot::GPA {
+            return Some(vaddr);
+        }
+        let guest_root = (self.shadow_state.csrs.satp & 0xfff_ffff_ffff) << 12;
+        translate_guest_address::<P>(&self.guest_memory, guest_root, vaddr)
+            .map(|translation| translation.guest_pa)
     }
 
     pub fn translate_guest_ppte(&self, vpn: VirtPageNum) -> Option<PageTableEntry> {

@@ -24,12 +24,25 @@ fn register_value(ctx: &TrapContext, register: usize) -> usize {
     if register == 0 { 0 } else { ctx.x[register] }
 }
 
+/// Bind the decoded effective GVA to the GPA captured from the same page
+/// fault. PR #68 prevents an instruction-address mismatch from accessing a
+/// VM device with a stale or unrelated translated address.
+fn fault_gpa(
+    effective_guest_va: usize,
+    fault_guest_va: usize,
+    fault_guest_pa: usize,
+) -> Option<usize> {
+    (effective_guest_va == fault_guest_va).then_some(fault_guest_pa)
+}
+
 /// PR #39 decodes one trapped MMIO instruction and delegates the reconstructed
 /// Guest address to the current VM's device bus.
 pub fn handle_device_mmio<P: PageTable + PageDebug>(
     guest: &mut Vcpu<P>,
     device_bus: &mut DeviceBus,
     ctx: &mut TrapContext,
+    fault_guest_va: usize,
+    fault_guest_pa: usize,
 ) -> bool {
     let (len, inst) = decode_instruction_at_address(guest, ctx.sepc);
     if let Some(inst) = inst {
@@ -38,16 +51,24 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
                 let rs1 = i.rs1() as usize;
                 let rs2 = i.rs2() as usize;
                 let vaddr = instruction_address(register_value(ctx, rs1), i.imm());
+                let Some(guest_pa) = fault_gpa(vaddr, fault_guest_va, fault_guest_pa) else {
+                    return false;
+                };
                 let value = register_value(ctx, rs2);
                 // PR #39 routes the reconstructed Guest address only through
                 // the DeviceBus owned by this vCPU's VM.
-                if !device_bus.write_u32(vaddr, value as u32) {
+                // PR #68 supplies a GPA even when Linux used a high virtual
+                // direct-map alias for the instruction's effective address.
+                if !device_bus.write_u32(guest_pa, value as u32) {
                     return false;
                 }
             },
             riscv_decode::Instruction::Lw(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let Some(value) = device_bus.read_u32(vaddr) else {
+                let Some(guest_pa) = fault_gpa(vaddr, fault_guest_va, fault_guest_pa) else {
+                    return false;
+                };
+                let Some(value) = device_bus.read_u32(guest_pa) else {
                     return false;
                 };
                 if i.rd() != 0 {
@@ -56,7 +77,10 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
             },
             riscv_decode::Instruction::Lwu(i) => {
                 let vaddr = instruction_address(register_value(ctx, i.rs1() as usize), i.imm());
-                let Some(value) = device_bus.read_u32(vaddr) else {
+                let Some(guest_pa) = fault_gpa(vaddr, fault_guest_va, fault_guest_pa) else {
+                    return false;
+                };
+                let Some(value) = device_bus.read_u32(guest_pa) else {
                     return false;
                 };
                 if i.rd() != 0 {
@@ -79,6 +103,20 @@ pub fn handle_device_mmio<P: PageTable + PageDebug>(
     }
     ctx.sepc += len;
     true
+}
+
+/// PR #68 locks down the GVA/GPA boundary used by Linux's virtual PLIC path.
+pub(super) fn mmio_address_self_test() {
+    const LINUX_PLIC_VA: usize = 0xffff_ffc6_0400_2000;
+    const PLIC_CONTEXT_GPA: usize = 0x0c00_2000;
+    assert_eq!(
+        fault_gpa(LINUX_PLIC_VA, LINUX_PLIC_VA, PLIC_CONTEXT_GPA),
+        Some(PLIC_CONTEXT_GPA),
+    );
+    assert_eq!(
+        fault_gpa(LINUX_PLIC_VA + 4, LINUX_PLIC_VA, PLIC_CONTEXT_GPA),
+        None,
+    );
 }
 
 /// 时钟中断处理函数

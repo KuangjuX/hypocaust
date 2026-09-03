@@ -47,8 +47,14 @@ pub fn handle_page_fault<P: PageTable + PageDebug>(
     // route them before enforcing the page-table-entry alignment invariant.
     // PR #39 asks the current VM's bus whether this fault is MMIO. Global
     // address tests could accidentally route one VM to another VM's device.
-    if device_bus.contains(guest_va) {
-        return handle_device_mmio(guest, device_bus, ctx);
+    // PR #68 walks Linux's high virtual MMIO alias back to a GPA before asking
+    // the VM-local bus. The shadow leaf intentionally stays absent so the
+    // virtual PLIC receives every access instead of exposing the Host PLIC.
+    if let Some(guest_pa) = guest
+        .translate_guest_vaddr_to_gpa(guest_va)
+        .filter(|guest_pa| device_bus.contains(*guest_pa))
+    {
+        return handle_device_mmio(guest, device_bus, ctx, guest_va, guest_pa);
     }
     if guest_va % core::mem::size_of::<PageTableEntry>() != 0 {
         // PR #48 (`fix-bug/guest-exception-forwarding`) treats an ordinary
