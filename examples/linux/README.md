@@ -26,6 +26,7 @@ Install the root project prerequisites plus:
 - `curl`;
 - `gzip`;
 - `bsdtar` from libarchive;
+- `python3`;
 - either `sha256sum` or `shasum`.
 
 ## Run
@@ -59,13 +60,14 @@ HYPOCAUST_LINUX_OK
 
 Press `Ctrl-a`, then `x`, to stop QEMU.
 
-## Current performance boundary
+## Firmware delegation
 
-The default QEMU OpenSBI firmware handles deprivileged Guest supervisor CSR
-instructions in M-mode before redirecting them to Hypocaust and emits a
-`system_opcode_insn` diagnostic for each unsupported emulation attempt. This
-causes severe log and trap overhead, so even small BusyBox commands may take a
-long time. The example is a correctness baseline, not a performance claim.
+PR #74 prepares a private copy of QEMU's OpenSBI v1.8.1 firmware and adds the
+illegal-instruction bit to its `medeleg` mask. Deprivileged Guest supervisor
+instructions then trap directly from U-mode to Hypocaust in Host S-mode instead
+of first entering M-mode and emitting an OpenSBI diagnostic. The patcher checks
+for exactly one known instruction sequence and fails closed on other firmware
+layouts. Set `QEMU_OPENSBI` explicitly when QEMU cannot report its data path.
 
 ## Cleanup
 
