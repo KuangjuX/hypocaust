@@ -328,6 +328,23 @@ fn install_superpage_leaves<P: PageTable>(
     }
 }
 
+/// Install a Host-private leaf without assuming its slot is empty. PR #67
+/// (`fix-bug/idempotent-shadow-leaf-mapping`) makes this operation idempotent
+/// because Linux UVA roots can share the lower-level shadow path where the
+/// kernel root already installed the trampoline and trap-context leaves.
+fn install_hypervisor_leaf<P: PageTable>(
+    spt: &mut P,
+    vpn: VirtPageNum,
+    ppn: PhysPageNum,
+    flags: PTEFlags,
+) {
+    if let Some(pte) = spt.find_pte(vpn) {
+        *pte = PageTableEntry::new(ppn, flags | PTEFlags::V);
+    } else {
+        spt.map(vpn, ppn, flags);
+    }
+}
+
 /// PR #58 validates Sv39 leaf classification, size, and alignment without
 /// allocating the hundreds of 4 KiB leaves used by a real 1 GiB mapping.
 pub(crate) fn superpage_self_test() {
@@ -369,6 +386,29 @@ pub(crate) fn superpage_self_test() {
     assert!(
         !shadow_leaf.is_valid(),
         "superpage expansion must detach the Guest leaf before allocating Host levels",
+    );
+
+    // PR #67 reproduces the shared-shadow-path case: a UVA root can inherit
+    // the Host trampoline leaf that was already installed for the kernel root.
+    let mut special_pages = crate::page_table::PageTableSv39::new();
+    let special_vpn = VirtPageNum::from(TRAMPOLINE >> 12);
+    let special_ppn = PhysPageNum::from(0x12345);
+    install_hypervisor_leaf(
+        &mut special_pages,
+        special_vpn,
+        special_ppn,
+        PTEFlags::R | PTEFlags::X,
+    );
+    install_hypervisor_leaf(
+        &mut special_pages,
+        special_vpn,
+        special_ppn,
+        PTEFlags::R | PTEFlags::X,
+    );
+    assert_eq!(
+        special_pages.translate(special_vpn).map(|pte| pte.ppn()),
+        Some(special_ppn),
+        "Host-private shadow leaves must be idempotent",
     );
 }
 
@@ -802,12 +842,28 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             // 为 `SPT` 映射跳板页
             // 无论是 guest spt 还是 user spt 都要映射跳板页与 Trap Context
             let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
-            let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-            spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
+            let trampoline_hppn = hypervisor_memory
+                .translate(VirtPageNum::from(TRAMPOLINE >> 12))
+                .unwrap()
+                .ppn();
+            // PR #67 permits a new UVA root to retain and refresh a mapping
+            // already inherited through a shared kernel shadow path.
+            install_hypervisor_leaf(
+                &mut spt,
+                VirtPageNum::from(TRAMPOLINE >> 12),
+                trampoline_hppn,
+                PTEFlags::R | PTEFlags::X,
+            );
 
-            let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
+            let trapctx_hvpn =
+                VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
             let trapctx_hppn = hypervisor_memory.translate(trapctx_hvpn).unwrap().ppn();
-            spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
+            install_hypervisor_leaf(
+                &mut spt,
+                VirtPageNum::from(TRAP_CONTEXT >> 12),
+                trapctx_hppn,
+                PTEFlags::R | PTEFlags::W,
+            );
 
             // hdebug!("Make new SPT(satp -> {:#x}, spt -> {:#x}) ", satp, spt.token());
             let shadow_satp = self.shadow_state.shadow_page_tables.push(satp, spt);
@@ -856,28 +912,31 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                         full_walks += 1;
                         let hypervisor_memory = HYPERVISOR_MEMORY.exclusive_access();
                         // 为 `SPT` 映射跳板页
-                        let trampoline_hppn = hypervisor_memory.translate(VirtPageNum::from(TRAMPOLINE >> 12)).unwrap().ppn();
-                        if let Some(pte) = spt.translate(VirtPageNum::from(TRAMPOLINE >> 12)) {
-                            if !pte.is_valid() {
-                                htracking!("user remap trampoline");
-                                spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-                            }
-                        }else{
-                            htracking!("user remap trampoline");
-                            spt.map(VirtPageNum::from(TRAMPOLINE >> 12), trampoline_hppn, PTEFlags::R | PTEFlags::X);
-                        }
+                        let trampoline_hppn = hypervisor_memory
+                            .translate(VirtPageNum::from(TRAMPOLINE >> 12))
+                            .unwrap()
+                            .ppn();
+                        // PR #67 reapplies Host-private mappings after a full
+                        // Guest refresh, whether the shared slot is absent,
+                        // invalid, or already contains the desired leaf.
+                        install_hypervisor_leaf(
+                            spt,
+                            VirtPageNum::from(TRAMPOLINE >> 12),
+                            trampoline_hppn,
+                            PTEFlags::R | PTEFlags::X,
+                        );
 
-                        let trapctx_hvpn = VirtPageNum::from(self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12);
-                        let trapctx_hppn = hypervisor_memory.translate(trapctx_hvpn).unwrap().ppn();
-                        if let Some(pte) = spt.translate(VirtPageNum::from(TRAP_CONTEXT >> 12)) {
-                            if !pte.is_valid() {
-                                htracking!("user remap trap context");
-                                spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
-                            }
-                        }else{
-                            htracking!("user remap trap context");
-                            spt.map(VirtPageNum::from(TRAP_CONTEXT >> 12), trapctx_hppn, PTEFlags::R | PTEFlags::W);
-                        }
+                        let trapctx_hvpn = VirtPageNum::from(
+                            self.translate_guest_paddr(TRAP_CONTEXT).unwrap() >> 12,
+                        );
+                        let trapctx_hppn =
+                            hypervisor_memory.translate(trapctx_hvpn).unwrap().ppn();
+                        install_hypervisor_leaf(
+                            spt,
+                            VirtPageNum::from(TRAP_CONTEXT >> 12),
+                            trapctx_hppn,
+                            PTEFlags::R | PTEFlags::W,
+                        );
                         self.shadow_state
                             .shadow_page_tables
                             .record_page_table_pages(&synchronized_pages);
