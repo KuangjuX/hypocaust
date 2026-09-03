@@ -6,6 +6,7 @@ KERNEL_BIN := target/$(TARGET)/$(MODE)/hypocaust.bin
 GDB ?= gdb-multiarch
 QEMU ?= qemu-system-riscv64
 SMP ?= 1
+BIOS ?= default
 OBJDUMP ?= rust-objdump --arch-name=riscv64
 OBJCOPY ?= rust-objcopy --binary-architecture=riscv64
 
@@ -22,9 +23,11 @@ XV6_RUST_KERNEL_ELF := $(XV6_RUST_DIR)/kernel/target/$(TARGET)/$(MODE)/kernel
 XV6_RUST_FS_IMG := $(XV6_RUST_DIR)/fs.img
 
 # QEMU's bundled OpenSBI loads Hypocaust at its linked 0x80200000 entry point.
+# PR #74 lets the Linux example supply a patched copy that delegates illegal
+# instructions directly to Host S-mode while keeping the default for xv6-rust.
 # PR #38 (`feature/multivcpu-scheduler`) makes Host hart count configurable for
 # scheduler and secondary-hart validation while preserving the one-hart default.
-QEMUOPTS := -machine virt -smp $(SMP) -m 3G -bios default -kernel $(KERNEL_ELF) -nographic
+QEMUOPTS := -machine virt -smp $(SMP) -m 3G -bios $(BIOS) -kernel $(KERNEL_ELF) -nographic
 QEMUOPTS += -drive file=$(FS_VM0_IMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 # PR #45 (`feature/multi-guest-qemu`) gives the second VM a distinct writable

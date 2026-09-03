@@ -61,8 +61,11 @@ The QEMU boot path currently deprivileges Guest S-mode into physical U-mode.
 Privileged instructions first reach OpenSBI in M-mode, whose diagnostic build
 prints `system_opcode_insn: Invalid opcode ...` messages. Those writes happen
 outside Hypocaust and therefore outside its output lock; they can still appear
-inside a labelled partial prompt. Removing that noise requires a compatible
-OpenSBI build or RISC-V H-extension execution and is not hidden by this feature.
+inside a labelled partial prompt. PR #74
+(`fix-bug/linux-opensbi-illegal-delegation`) resolves this for the Linux example
+by preparing a checked private firmware copy whose `medeleg` mask sends illegal
+instructions directly to Hypocaust. Default unpatched firmware retains the
+diagnostic path described here.
 
 ## Validation
 

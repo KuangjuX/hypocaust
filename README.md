@@ -126,7 +126,7 @@ unexpected physical interrupts, remain Host-fatal integration errors. See
 | --- | --- |
 | ISA | RV64GC with Sv39; H extension not required |
 | Machine | QEMU `virt` |
-| Firmware | QEMU bundled OpenSBI (`-bios default`) |
+| Firmware | QEMU bundled OpenSBI; Linux uses a verified one-instruction copy patch |
 | Host harts | 1 (time-sliced) and 2 (concurrent) |
 | Guests | 2 VMs, one vCPU each |
 | Guest RAM | 128 MiB per VM |
@@ -237,8 +237,8 @@ A successful boot reaches both records:
 
 VM 0 owns keyboard focus. The BusyBox shell is PID 1 and therefore reports that
 job control is unavailable, but it accepts commands at its labelled `~ #`
-prompt. Command execution is currently very slow because of the OpenSBI trap/log
-limitation described below. See the complete
+prompt. The example prepares a private OpenSBI copy that delegates Guest
+privileged traps directly to Hypocaust. See the complete
 [Alpine Linux example contract](examples/linux/README.md).
 
 ## Build and development commands
@@ -312,9 +312,10 @@ before opening a public issue.
   exists, but the example uses mediated devices.
 - Legacy SBI console output is multiplexed onto one serial terminal; only one
   VM has input focus at a time.
-- OpenSBI prints `system_opcode_insn: Invalid opcode ...` for deprivileged
-  privileged instructions. Those M-mode diagnostics bypass Hypocaust's console
-  lock and add substantial trap/log overhead.
+- The Linux workflow's OpenSBI delegation patch recognizes QEMU's v1.8.1
+  instruction sequence and intentionally fails closed on other firmware
+  layouts. The unpatched generic firmware retains substantial M-mode trap/log
+  overhead for deprivileged Guest privileged instructions.
 - Guest `WFI` is currently emulated as a no-op, so idle Guests can consume Host
   CPU and generate extra firmware traps.
 - A Guest shutdown request still lacks a VM lifecycle manager and must not be
@@ -355,10 +356,10 @@ completion). Rebuild with `make xv6-rust`.
 physical console focus. Multiple independent interactive terminals require a
 future PTY/socket or virtio-console backend.
 
-**Large volumes of `system_opcode_insn` output** — emitted by the bundled
-OpenSBI diagnostic path, not Hypocaust's logger. Use the pinned QEMU baseline
-for comparable profiling; a compatible firmware/H-extension path is required
-to remove it.
+**The OpenSBI patcher rejects the firmware** — the Linux example only changes a
+unique delegation-mask instruction from QEMU's OpenSBI v1.8.1. Install the
+validated QEMU release or set `QEMU_OPENSBI` to that generic RV64 firmware; an
+unknown binary is never patched speculatively.
 
 **Port 1234 is busy** — stop the other debugger or change the port in both the
 QEMU and GDB commands.
