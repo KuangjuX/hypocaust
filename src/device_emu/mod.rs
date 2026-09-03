@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 
 use crate::guest::GuestMemory;
 use crate::constants::layout::PAGE_SIZE;
-pub use uart::Uart;
+pub use uart::{Uart, UART_GPA, UART_IRQ, UART_SIZE};
 pub(crate) use uart::self_test as console_self_test;
 // PR #16 (fix-bug/modern-rust-toolchain): keep device types available to the
 // API even when a particular guest configuration does not construct them.
@@ -102,6 +102,9 @@ impl DeviceBusConfig {
 
     fn validate(self) {
         let plic = MmioAssignment::new(PLIC_GPA, PLIC_GPA, PLIC_SIZE);
+        // PR #71 reserves the emulated UART aperture for every VM so a runtime
+        // device assignment cannot silently shadow Linux's console registers.
+        let uart = MmioAssignment::new(UART_GPA, UART_GPA, UART_SIZE);
         assert!(
             self.virtio_block.size >= 0x1000,
             "VirtIO MMIO assignment is smaller than one register aperture",
@@ -116,6 +119,10 @@ impl DeviceBusConfig {
         assert!(
             !self.virtio_block.overlaps(plic),
             "VirtIO MMIO assignment overlaps the virtual PLIC",
+        );
+        assert!(
+            !self.virtio_block.overlaps(uart),
+            "VirtIO MMIO assignment overlaps the virtual UART",
         );
         if let Some(qemu_test) = self.qemu_test {
             assert!(qemu_test.size != 0, "QEMU test MMIO assignment is empty");
@@ -133,6 +140,10 @@ impl DeviceBusConfig {
             assert!(
                 !qemu_test.overlaps(plic),
                 "QEMU test MMIO assignment overlaps the virtual PLIC",
+            );
+            assert!(
+                !qemu_test.overlaps(uart),
+                "QEMU test MMIO assignment overlaps the virtual UART",
             );
         }
     }
@@ -179,7 +190,8 @@ impl DeviceBus {
     /// PR #39 centralizes the MMIO membership test instead of using global
     /// address predicates that cannot distinguish one VM's devices.
     pub fn contains(&self, guest_address: usize) -> bool {
-        self.virtio.contains(guest_address)
+        self.uart.contains(guest_address)
+            || self.virtio.contains(guest_address)
             || self.plic.contains(guest_address)
             || self
                 .qemu_virt_tester
@@ -201,6 +213,15 @@ impl DeviceBus {
         }
         if self.plic.contains(guest_address) {
             return self.plic.read_u32(guest_address);
+        }
+        None
+    }
+
+    /// PR #71 supplies byte MMIO for the NS16550A register file. Wider devices
+    /// remain on the existing u32 bus contract so unsupported widths still fault.
+    pub fn read_u8(&mut self, guest_address: usize) -> Option<u8> {
+        if self.uart.contains(guest_address) {
+            return self.uart.read_u8(guest_address);
         }
         None
     }
@@ -228,6 +249,19 @@ impl DeviceBus {
         }
         if self.plic.contains(guest_address) {
             return self.plic.write_u32(guest_address, value);
+        }
+        false
+    }
+
+    /// PR #71 keeps Guest serial writes in the VM-owned frontend and never
+    /// grants direct access to the shared physical UART register page.
+    pub fn write_u8(&mut self, guest_address: usize, value: u8) -> bool {
+        if self.uart.contains(guest_address) {
+            let handled = self.uart.write_u8(guest_address, value);
+            if !self.uart.interrupt_pending() {
+                self.plic.lower(UART_IRQ);
+            }
+            return handled;
         }
         false
     }
@@ -267,6 +301,14 @@ impl DeviceBus {
                     completions,
                 );
             }
+        }
+        // PR #71 multiplexes the focused Host input into this VM's receive FIFO
+        // and exposes both receive-ready and transmit-empty through UART IRQ 10.
+        self.uart.poll_input();
+        if self.uart.interrupt_pending() {
+            self.plic.raise(UART_IRQ, context);
+        } else {
+            self.plic.lower(UART_IRQ);
         }
         self.plic.has_interrupt(context)
     }

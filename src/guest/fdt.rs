@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use crate::constants::layout::CLOCK_FREQ;
 use crate::constants::layout::{PAGE_SIZE, VM_MEMORY_SLOT_SIZE};
-use crate::device_emu::{PLIC_GPA, PLIC_SIZE, VIRTIO_BLOCK_IRQ};
+use crate::device_emu::{PLIC_GPA, PLIC_SIZE, UART_GPA, UART_IRQ, UART_SIZE, VIRTIO_BLOCK_IRQ};
 use crate::guest::GuestMemory;
 use crate::identity::GuestHartId;
 
@@ -277,6 +277,9 @@ pub fn install_configured_guest_fdt(
 
     fdt.begin_node("chosen");
     fdt.property_string("bootargs", config.bootargs);
+    // PR #71 selects the VM-local virtual UART as Linux's persistent console;
+    // SBI earlycon remains available only until the serial console registers.
+    fdt.property_string("stdout-path", "/soc/uart@10000000:115200n8");
     if let Some(initrd) = config.initrd {
         fdt.property_address("linux,initrd-start", initrd.start_gpa);
         fdt.property_address("linux,initrd-end", initrd.end_gpa);
@@ -308,6 +311,17 @@ pub fn install_configured_guest_fdt(
             SUPERVISOR_EXTERNAL_INTERRUPT,
         ],
     );
+    fdt.end_node();
+
+    // PR #71 publishes the software-emulated UART at QEMU virt's conventional
+    // GPA and IRQ while withholding the physical Host UART from the Guest.
+    fdt.begin_node("uart@10000000");
+    fdt.property("compatible", b"ns16550a\0");
+    fdt.property_cells("reg", &[0, UART_GPA as u32, 0, UART_SIZE as u32]);
+    fdt.property_u32("clock-frequency", 3_686_400);
+    fdt.property_u32("current-speed", 115_200);
+    fdt.property_u32("interrupt-parent", PLIC_PHANDLE);
+    fdt.property_u32("interrupts", UART_IRQ);
     fdt.end_node();
 
     fdt.begin_node("virtio_mmio@10001000");
@@ -393,6 +407,17 @@ pub fn install_configured_guest_fdt(
     assert_eq!(
         chosen.property("bootargs").and_then(|value| value.as_str()),
         Some(config.bootargs),
+    );
+    assert_eq!(
+        chosen.property("stdout-path").and_then(|value| value.as_str()),
+        Some("/soc/uart@10000000:115200n8"),
+    );
+    let uart = installed
+        .find_node("/soc/uart@10000000")
+        .expect("Guest FDT has no virtual UART");
+    assert_eq!(
+        uart.property("interrupts").and_then(|value| value.as_usize()),
+        Some(UART_IRQ as usize),
     );
     if let Some(initrd) = config.initrd {
         // PR #62 verifies the exact half-open interval after serialization so

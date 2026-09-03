@@ -73,9 +73,9 @@ fn embedded_guest_initrd() -> Option<&'static [u8]> {
     None
 }
 
-/// PR #62 selects an SBI early console that remains active until a later PR
-/// adds the production virtual UART used by the interactive Linux console.
-const LINUX_BOOTARGS: &str = "earlycon=sbi keep_bootcon loglevel=8";
+/// PR #71 (`feature/linux-virtual-uart-console`) hands Linux from SBI earlycon
+/// to the VM-local NS16550A so `/init` and an interactive getty remain visible.
+const LINUX_BOOTARGS: &str = "earlycon=sbi console=ttyS0,115200 loglevel=8";
 
 const HART_BOOT_STACK_SIZE: usize = 16 * PAGE_SIZE;
 
