@@ -20,3 +20,6 @@ fdt = { version = "0.1.5" }
 
 [features]
 embed_guest_kernel = []
+# PR #62 (`feature/linux-initramfs-boot`) keeps the Linux artifacts local while
+# making their inclusion an explicit build mode rather than an implicit file.
+linux_guest = ["embed_guest_kernel"]

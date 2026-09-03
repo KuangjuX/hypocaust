@@ -41,7 +41,8 @@ pub(crate) use self::fdt::install_guest_fdt;
 // compatibility wrapper above.
 #[allow(unused_imports)]
 pub(crate) use self::fdt::{
-    install_configured_guest_fdt, GuestFdtConfig, GuestInitrdRange,
+    install_configured_guest_fdt, install_guest_initrd, GuestFdtConfig,
+    GuestInitrdRange,
 };
 // PR #16 (fix-bug/modern-rust-toolchain): retain public translation helpers
 // without weakening the crate-wide warning policy.

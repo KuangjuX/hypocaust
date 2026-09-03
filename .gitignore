@@ -2,6 +2,9 @@
 hyper.S
 guest.S
 guest_kernel
+# PR #62 treats the Linux initramfs as a reproducible example artifact, not a
+# repository-owned binary or submodule.
+linux_initrd
 .gdb_history
 fs.img
 # PR #45 (`feature/multi-guest-qemu`) generates one writable disk per VM.

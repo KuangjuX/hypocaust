@@ -70,6 +70,36 @@ pub struct GuestInitrdRange {
     pub end_gpa: usize,
 }
 
+/// Install one Linux initramfs immediately below the reserved Guest FDT page.
+///
+/// PR #62 (`feature/linux-initramfs-boot`) copies the same immutable build
+/// artifact into each VM's private RAM slot. The returned physical range is
+/// suitable for `/chosen/linux,initrd-{start,end}` and never aliases the FDT.
+pub fn install_guest_initrd(
+    guest_memory: &GuestMemory,
+    initrd: &[u8],
+) -> GuestInitrdRange {
+    assert!(!initrd.is_empty(), "Linux initramfs is empty");
+    let fdt_gpa = guest_memory.guest_end() - PAGE_SIZE;
+    let unaligned_start = fdt_gpa
+        .checked_sub(initrd.len())
+        .expect("Linux initramfs does not fit below the Guest FDT");
+    let start_gpa = unaligned_start & !(PAGE_SIZE - 1);
+    let end_gpa = start_gpa
+        .checked_add(initrd.len())
+        .expect("Linux initramfs range overflow");
+    let start_hpa = guest_memory
+        .translate_range(start_gpa, initrd.len())
+        .expect("Linux initramfs is outside VM RAM");
+    unsafe {
+        core::ptr::copy_nonoverlapping(initrd.as_ptr(), start_hpa as *mut u8, initrd.len());
+    }
+    GuestInitrdRange {
+        start_gpa,
+        end_gpa,
+    }
+}
+
 struct FdtBuilder {
     structure: Vec<u8>,
     strings: Vec<u8>,
@@ -344,6 +374,22 @@ pub fn install_configured_guest_fdt(
         chosen.property("bootargs").and_then(|value| value.as_str()),
         Some(config.bootargs),
     );
+    if let Some(initrd) = config.initrd {
+        // PR #62 verifies the exact half-open interval after serialization so
+        // a cell-width or end-address regression cannot silently corrupt boot.
+        assert_eq!(
+            chosen
+                .property("linux,initrd-start")
+                .and_then(|value| value.as_usize()),
+            Some(initrd.start_gpa),
+        );
+        assert_eq!(
+            chosen
+                .property("linux,initrd-end")
+                .and_then(|value| value.as_usize()),
+            Some(initrd.end_gpa),
+        );
+    }
     fdt_gpa
 }
 
