@@ -208,14 +208,29 @@ impl<P> ShadowPageTables<P> where P: PageDebug + PageTable {
 
 }
 
-pub fn page_table_mode<P: PageTable>(page_table: P, guest_memory: &GuestMemory) -> PageTableRoot {
-    if page_table
-        .translate_guest(VirtPageNum::from(GUEST_KERNEL_VIRT_START >> 12), guest_memory)
-        .is_some()
-    {
-        return PageTableRoot::GVA
+/// PR #65 (`fix-bug/linux-first-guest-page-table`) treats the first Sv39 root
+/// as the Guest kernel root even when Linux's temporary mapping does not cover
+/// the xv6 identity-map probe address. Later non-matching roots remain UVA.
+fn classify_page_table_root(
+    maps_identity_probe: bool,
+    guest_kernel_root_exists: bool,
+) -> PageTableRoot {
+    if maps_identity_probe || !guest_kernel_root_exists {
+        PageTableRoot::GVA
+    } else {
+        PageTableRoot::UVA
     }
-    PageTableRoot::UVA
+}
+
+pub fn page_table_mode<P: PageTable>(
+    page_table: P,
+    guest_memory: &GuestMemory,
+    guest_kernel_root_exists: bool,
+) -> PageTableRoot {
+    let maps_identity_probe = page_table
+        .translate_guest(VirtPageNum::from(GUEST_KERNEL_VIRT_START >> 12), guest_memory)
+        .is_some();
+    classify_page_table_root(maps_identity_probe, guest_kernel_root_exists)
 }
 
 fn checked_gpa_to_hpa(guest_memory: &GuestMemory, gpa: usize, len: usize) -> usize {
@@ -316,6 +331,21 @@ fn install_superpage_leaves<P: PageTable>(
 /// PR #58 validates Sv39 leaf classification, size, and alignment without
 /// allocating the hundreds of 4 KiB leaves used by a real 1 GiB mapping.
 pub(crate) fn superpage_self_test() {
+    // PR #65 verifies Linux's first root becomes the protection root without
+    // weakening the established identity-map classification for xv6-rust.
+    assert!(matches!(
+        classify_page_table_root(false, false),
+        PageTableRoot::GVA,
+    ));
+    assert!(matches!(
+        classify_page_table_root(true, true),
+        PageTableRoot::GVA,
+    ));
+    assert!(matches!(
+        classify_page_table_root(false, true),
+        PageTableRoot::UVA,
+    ));
+
     let aligned = PageTableEntry::new(
         PhysPageNum::from(GUEST_KERNEL_VIRT_START >> 12),
         PTEFlags::V | PTEFlags::R | PTEFlags::X,
@@ -663,7 +693,12 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
             checked_gpa_to_hpa(guest_memory, root_gpa, PAGE_SIZE) >> 12
         );
         let gpt = P::from_ppn(root_hppn);
-        let mode = page_table_mode(gpt, guest_memory);
+        let guest_kernel_root_exists = self
+            .shadow_state
+            .shadow_page_tables
+            .guest_satp
+            .is_some();
+        let mode = page_table_mode(gpt, guest_memory, guest_kernel_root_exists);
         let requires_resynchronization = self.shadow_state.shadow_page_tables
             .requires_resynchronization(satp);
         if requires_resynchronization.is_none() {
@@ -686,7 +721,13 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                 }
                 PageTableRoot::UVA => {
                     // 同步 guest spt,即将用户页表设置为只读
-                    let guest_spt = self.shadow_state.shadow_page_tables.guest_page_table().unwrap();   
+                    // PR #65 makes the first root GVA, so every later UVA root
+                    // has a concrete protection root instead of unwrapping None.
+                    let guest_spt = self
+                        .shadow_state
+                        .shadow_page_tables
+                        .guest_page_table()
+                        .expect("secondary Guest root requires a kernel shadow root");
                     let initialized = initialize_shadow_page_table::<P>(guest_memory, satp, mode, Some(guest_spt)).unwrap();
                     spt = initialized.0;
                     walked_page_table_pages += initialized.1.len();
