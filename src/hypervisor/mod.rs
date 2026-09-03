@@ -76,7 +76,7 @@ impl<P: PageTable + PageDebug> Hypervisor<P> {
     pub fn prepare_current_user_token(
         &mut self,
         hart_id: HartId,
-    ) -> (usize, Option<usize>) {
+    ) -> (usize, Option<usize>, usize) {
         self.current_vcpu(hart_id).prepare_user_token()
     }
 

@@ -212,7 +212,7 @@ pub fn trap_return() -> ! {
     set_user_trap_entry();
     let hart_id = HartId::current();
     let trap_cx_ptr = TRAP_CONTEXT;
-    let (user_satp, flush_asid) = {
+    let (user_satp, flush_asid, guest_scounteren) = {
         let mut hypervisor_guard = HYPOCAUST.lock();
         let hypervisor = hypervisor_guard.as_mut().unwrap();
         // PR #40 arbitrates pending interrupts for whichever vCPU the
@@ -225,6 +225,9 @@ pub fn trap_return() -> ! {
         // destination; clean shadow ASIDs retain translations across traps.
         unsafe { asm!("sfence.vma x0, {asid}", asid = in(reg) asid) };
     }
+    // PR #64 installs the selected vCPU's effective counter permissions on
+    // every Guest return. Host S-mode access is unaffected by `scounteren`.
+    unsafe { asm!("csrw scounteren, {value}", value = in(reg) guest_scounteren) };
     extern "C" {
         fn __alltraps();
         fn __restore();

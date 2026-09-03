@@ -19,7 +19,9 @@ pub struct ControlRegisters {
     /// 中断代理寄存器
     pub sip: usize,
     pub stvec: usize,
-    // scounteren: usize, -- Hard-wired to zero
+    /// PR #64 (`feature/vcpu-scounteren`) stores the Guest-visible counter
+    /// permissions independently for every vCPU.
+    pub scounteren: usize,
     pub sscratch: usize,
     pub sepc: usize,
     pub scause: usize,
@@ -57,6 +59,10 @@ impl VirtualInterrupt {
 }
 
 impl ControlRegisters {
+    /// Hypocaust exposes only the architectural cycle, time, and instret
+    /// counters; hardware-performance-monitor counters remain unavailable.
+    const STANDARD_COUNTER_MASK: usize = 0b111;
+
     pub const fn new() -> Self {
         Self {
             sstatus: 0,
@@ -68,9 +74,27 @@ impl ControlRegisters {
             scause: 0,
             stval: 0,
             satp: 0,
+            scounteren: 0,
             // PR #16 (fix-bug/modern-rust-toolchain): use the current associated
             // constant while preserving the disabled-until-programmed timer.
             mtimecmp: usize::MAX
+        }
+    }
+
+    /// PR #64 applies the WARL mask advertised by Hypocaust when Linux writes
+    /// `scounteren`, rather than leaking unsupported hardware counter bits.
+    pub fn set_scounteren(&mut self, value: usize) {
+        self.scounteren = value & Self::STANDARD_COUNTER_MASK;
+    }
+
+    /// PR #64 converts virtual privilege into the physical U-mode permission
+    /// needed by deprivileged Guests. Virtual S-mode may always read counters;
+    /// virtual U-mode is governed by that vCPU's `scounteren` value.
+    pub fn effective_scounteren(&self, guest_smode: bool) -> usize {
+        if guest_smode {
+            Self::STANDARD_COUNTER_MASK
+        } else {
+            self.scounteren
         }
     }
 
@@ -102,6 +126,11 @@ impl ControlRegisters {
 /// priority order without relying on a standard-library test harness.
 pub fn virtual_interrupt_self_test() {
     let mut registers = ControlRegisters::new();
+    assert_eq!(registers.effective_scounteren(true), 0b111);
+    assert_eq!(registers.effective_scounteren(false), 0);
+    registers.set_scounteren(usize::MAX);
+    assert_eq!(registers.scounteren, 0b111);
+    assert_eq!(registers.effective_scounteren(false), 0b111);
     registers.sie = SEIP | SSIP | STIP;
     registers.inject_interrupt(VirtualInterrupt::Timer);
     registers.inject_interrupt(VirtualInterrupt::Software);
