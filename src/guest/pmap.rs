@@ -1,4 +1,4 @@
-use alloc::collections::{VecDeque, BTreeMap};
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 
@@ -385,6 +385,57 @@ fn update_pte_readonly<P: PageTable>(vpn: VirtPageNum, spt: &mut P) -> bool {
     }
 }
 
+/// Protect every virtual alias of every Guest page-table page in one shadow
+/// root. PR #66 (`feature/shadow-page-table-alias-tracking`) replaces the old
+/// identity-address-only assumption with a reverse walk over shadow leaves, so
+/// Linux direct-map writes fault into the incremental PTE synchronizer.
+fn protect_page_table_aliases<P: PageTable>(
+    shadow_page_table: &mut P,
+    guest_memory: &GuestMemory,
+    page_table_pages: &[GuestPageTablePageState],
+) -> usize {
+    // PR #66 uses a compact sorted vector rather than a tree set here. This
+    // walk runs on the bounded per-vCPU Host stack, and binary search keeps
+    // lookups logarithmic without the deeper B-tree insertion call chain.
+    let mut protected_host_ppns: Vec<usize> = page_table_pages
+        .iter()
+        .filter_map(|page| {
+            guest_memory
+                .translate_range(page.vpn.0 << 12, PAGE_SIZE)
+                .map(|hpa| hpa >> 12)
+        })
+        .collect();
+    protected_host_ppns.sort_unstable();
+    protected_host_ppns.dedup();
+    let mut queue = VecDeque::new();
+    let mut protected_aliases = 0;
+    queue.push_back((shadow_page_table.root_ppn(), 0usize));
+
+    while let Some((page_table_ppn, level)) = queue.pop_front() {
+        for pte in page_table_ppn.get_pte_array().iter_mut() {
+            if !pte.is_valid() {
+                continue;
+            }
+            if is_leaf(*pte) {
+                // PR #58 expands valid Guest superpages into 4 KiB Host
+                // leaves, allowing one aliased page to be protected precisely.
+                if level == 2
+                    && protected_host_ppns.binary_search(&pte.ppn().0).is_ok()
+                {
+                    *pte = PageTableEntry::new(
+                        pte.ppn(),
+                        PTEFlags::R | PTEFlags::U | PTEFlags::V,
+                    );
+                    protected_aliases += 1;
+                }
+            } else if level < 2 {
+                queue.push_back((pte.ppn(), level + 1));
+            }
+        }
+    }
+    protected_aliases
+}
+
 fn clear_page_table<P: PageTable>(spt: &mut P, va: usize, valid_pte_count: usize) {
     if valid_pte_count == 0 {
         // htracking!("Drop the page table guest ppn -> {:#x}", guest_ppn.0);
@@ -524,6 +575,9 @@ fn synchronize_page_table<P: PageTable>(
     // a temporary from_ppn wrapper would free them on return and leave dangling
     // PTEs in the Guest's active shadow tree.
     install_superpage_leaves(shadow_page_table, guest_memory, &superpages);
+    // PR #66 reapplies alias protection after a full cached-root refresh,
+    // because synchronization may have restored writable Guest leaf flags.
+    protect_page_table_aliases(shadow_page_table, guest_memory, &page_table_pages);
     page_table_pages
 }
 
@@ -611,6 +665,13 @@ fn initialize_shadow_page_table<P: PageTable>(
     }
     let mut host_shadow_page_table = PageTable::from_ppn(PhysPageNum::from(host_root_pa >> 12));
     install_superpage_leaves(&mut host_shadow_page_table, guest_memory, &superpages);
+    // PR #66 protects Linux's high direct-map aliases as well as xv6-rust's
+    // identity aliases before the new shadow root can execute.
+    protect_page_table_aliases(
+        &mut host_shadow_page_table,
+        guest_memory,
+        &page_table_pages,
+    );
     page_table_pages.iter().for_each(|page| {
         match mode {
             PageTableRoot::GVA => {
@@ -876,6 +937,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                     .filter(|pte| pte.is_valid())
                     .count()
             });
+        let mut newly_linked_page_table = None;
         if pte.is_valid() && !(pte.readable() | pte.writable() | pte.executable()) {
             // PR #48 records a newly linked non-leaf page immediately. Its
             // first trapped write can then be distinguished from an ordinary
@@ -894,6 +956,7 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                 self.shadow_state
                     .shadow_page_tables
                     .record_page_table_pages(&[child_state]);
+                newly_linked_page_table = Some(child_state);
             }
         }
         // 获得影子页表
@@ -943,6 +1006,23 @@ impl<P> Vcpu<P> where P: PageDebug + PageTable {
                     // Host panic in checked shadow-memory translation.
                     pte_array[index] = PageTableEntry::empty();
                 }
+            }
+        }
+        if let Some(child_state) = newly_linked_page_table {
+            // PR #66 immediately reverse-protects every alias of a newly
+            // linked lower-level table. Otherwise Linux can populate that
+            // table through its direct map before the next full root refresh.
+            let current_satp = self.shadow_state.csrs.satp;
+            if let Some(current_spt) = self
+                .shadow_state
+                .shadow_page_tables
+                .shadow_page_table(current_satp)
+            {
+                protect_page_table_aliases(
+                    current_spt,
+                    guest_memory,
+                    core::slice::from_ref(&child_state),
+                );
             }
         }
         // PR #25 (`feature/cache-shadow-page-table-state`) invalidates every
