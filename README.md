@@ -3,11 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: RISC-V RV64](https://img.shields.io/badge/platform-RISC--V%20RV64-283272.svg)](#validated-platform)
 [![Guest: xv6-rust](https://img.shields.io/badge/guest-xv6--rust-b7410e.svg)](#run-the-xv6-rust-example)
+[![Guest: Linux](https://img.shields.io/badge/guest-Alpine%20Linux-0d597f.svg)](#run-the-linux-example)
 
 Hypocaust is a type-1 RISC-V hypervisor that runs beneath OpenSBI in Host
 S-mode and virtualizes Guest S-mode without requiring the RISC-V Hypervisor
 extension. It uses shadow Sv39 page tables, per-VM resource ownership, trapped
-privileged operations, and mediated devices to run isolated xv6-rust Guests.
+privileged operations, and mediated devices to run isolated xv6-rust and Linux
+Guests.
 
 The validated QEMU configuration boots two xv6-rust VMs concurrently on two
 Host harts, or time-slices both VMs on one Host hart. Each VM owns separate RAM,
@@ -34,6 +36,7 @@ frontend, VirtIO queue state, and writable disk image.
 | Storage | Per-VM mediated QEMU VirtIO block backend and writable disk |
 | Interrupts | Per-vCPU pending state and per-VM virtual PLIC |
 | Console | Per-VM buffered/labeled output; exclusive physical input focus |
+| Linux | Two Alpine 3.24.1 Guests boot to VM-local initramfs shells |
 | Exceptions | Synchronous Guest exceptions forwarded into the owning vCPU |
 | Passthrough | Fail-closed IOMMU/IRQ-remap policy API; no QEMU hardware adapter |
 
@@ -128,7 +131,7 @@ unexpected physical interrupts, remain Host-fatal integration errors. See
 | Guests | 2 VMs, one vCPU each |
 | Guest RAM | 128 MiB per VM |
 | QEMU RAM | 3 GiB |
-| Guest OS | xv6-rust SBI payload |
+| Guest OS | xv6-rust SBI payload; Alpine Linux 3.24.1 initramfs shell |
 | xv6-rust revision | `0e61a5e` (main, includes PRs #60 and #61) |
 | QEMU | 11.1.1 |
 | Rust | `nightly-2026-09-02` |
@@ -211,6 +214,33 @@ external xv6-rust checkout.
 
 See the complete [xv6-rust example contract](examples/xv6-rust/README.md).
 
+## Run the Linux example
+
+Linux is also an external Guest example rather than a submodule. The reproducible
+workflow pins Alpine Linux 3.24.1, verifies the official ISO checksum, extracts
+its RISC-V lts kernel and initramfs, and boots two BusyBox shells:
+
+```sh
+make qemu-linux
+```
+
+Install `curl`, `gzip`, `bsdtar`, and either `sha256sum` or `shasum` in addition
+to the base prerequisites. Generated artifacts stay in ignored paths and the
+download cache stays under `target/`.
+
+A successful boot reaches both records:
+
+```text
+[Guest VM 0] Run /bin/sh as init process
+[Guest VM 1] Run /bin/sh as init process
+```
+
+VM 0 owns keyboard focus. The BusyBox shell is PID 1 and therefore reports that
+job control is unavailable, but it accepts commands at its labelled `~ #`
+prompt. Command execution is currently very slow because of the OpenSBI trap/log
+limitation described below. See the complete
+[Alpine Linux example contract](examples/linux/README.md).
+
 ## Build and development commands
 
 | Command | Purpose |
@@ -221,6 +251,7 @@ See the complete [xv6-rust example contract](examples/xv6-rust/README.md).
 | `make qemu SMP=1` | Boot two time-sliced VMs |
 | `make qemu SMP=2` | Boot two concurrently running VMs |
 | `make qemu-xv6 SMP=2` | Refresh Guest artifacts and boot |
+| `make qemu-linux` | Verify Alpine artifacts and boot two initramfs shells |
 | `make qemu-gdb` | Start QEMU paused with GDB on TCP port 1234 |
 | `make asm` | Generate Host and Guest disassemblies |
 | `make clean` | Remove Hypocaust outputs and copied Guest artifacts |
@@ -302,6 +333,7 @@ before opening a public issue.
 | `src/page_table/` | Sv39 page-table implementation |
 | `src/constants/` | board and fixed memory-layout constants |
 | `examples/xv6-rust/` | external Guest integration; no vendored Guest source |
+| `examples/linux/` | verified Alpine artifact workflow; no vendored Guest source |
 | `docs/` | focused architecture, performance, and PR design records |
 
 There is no `.gitmodules` file. Neither minikernel nor xv6-rust is a
