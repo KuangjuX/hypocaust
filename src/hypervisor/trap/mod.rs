@@ -71,6 +71,8 @@ pub(crate) fn exception_routing_self_test() {
     // PR #57 validates Linux PTE AMO operations alongside trap routing before
     // any write-protected Guest page-table page can fault.
     page_fault::pte_atomic_self_test();
+    // PR #68 checks the virtual-MMIO GVA/GPA boundary before any Guest boots.
+    device::mmio_address_self_test();
     assert_eq!(
         route_trap(Trap::Exception(Exception::Breakpoint)),
         TrapRoute::ForwardGuestException,
